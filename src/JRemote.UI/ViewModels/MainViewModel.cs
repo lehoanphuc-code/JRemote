@@ -75,6 +75,7 @@ public partial class MainViewModel : ObservableObject, IAsyncDisposable
         _adbService.DeviceDisconnected += async (s, d) => await Application.Current.Dispatcher.InvokeAsync(RefreshDevicesAsync);
         _airPlayReceiver.ClientConnected += async (s, e) => await Application.Current.Dispatcher.InvokeAsync(() => HandleAirPlayClientConnected(e));
         _airPlayReceiver.ClientDisconnected += async (s, ip) => await Application.Current.Dispatcher.InvokeAsync(() => HandleAirPlayClientDisconnected(ip));
+        _airPlayReceiver.LogMessage += async (s, msg) => await Application.Current.Dispatcher.InvokeAsync(() => StatusMessage = msg);
     }
 
     public async Task InitializeAsync()
