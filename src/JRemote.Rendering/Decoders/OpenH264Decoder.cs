@@ -2,6 +2,7 @@ using H264Sharp;
 using JRemote.Core.Interfaces;
 using JRemote.Core.Logging;
 using JRemote.Core.Models;
+using System.IO;
 using System.Runtime.InteropServices;
 
 namespace JRemote.Rendering.Decoders;
@@ -18,6 +19,7 @@ public class OpenH264Decoder : IVideoDecoder
     private bool _initialized;
     private bool _isDisposed;
     private long _decodedFrameCount;
+    private long _feedCount;
     private bool _loggedFirstFrame;
 
     public int OutputWidth { get; private set; }
@@ -73,6 +75,26 @@ public class OpenH264Decoder : IVideoDecoder
                     noDelay: false,
                     out DecodingState state,
                     out YUVImagePointer yuv);
+
+                _feedCount++;
+                if (_feedCount <= 30)
+                {
+                    try
+                    {
+                        var dumpPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "stream_dump.h264");
+                        using var fs = new FileStream(dumpPath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite);
+                        fs.Write(nalData);
+                    }
+                    catch { }
+                }
+
+                if (_feedCount <= 10 || _feedCount % 120 == 0)
+                {
+                    string hexHeader = nalData.Length > 0 
+                        ? Convert.ToHexString(nalData.AsSpan(0, Math.Min(24, nalData.Length)))
+                        : "EMPTY";
+                    AppLogger.Log($"[OpenH264Decoder] Feed #{_feedCount} ({nalData.Length}B): success={success}, state={state}, yuv.W={yuv.Width}, yuv.H={yuv.Height}, header={hexHeader}");
+                }
 
                 if (success && yuv.Width > 0 && yuv.Height > 0)
                 {

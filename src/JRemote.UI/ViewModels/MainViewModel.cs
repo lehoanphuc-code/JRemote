@@ -242,13 +242,28 @@ public partial class MainViewModel : ObservableObject, IAsyncDisposable
 
     private void HandleAirPlayClientConnected(AirPlayClientConnectedEventArgs e)
     {
-        var iosDevice = new IOSDevice(e.ClientIp, e.DeviceName, e.ClientIp);
-        var vm = new DeviceItemViewModel(iosDevice);
-        Devices.Add(vm);
+        var existing = Devices.FirstOrDefault(d => d.Id == e.ClientIp);
+        if (existing != null)
+        {
+            if (ActiveMirroringDevice == existing && _activeSession?.IsRunning == true)
+            {
+                return; // Đang phản chiếu tốt, giữ nguyên
+            }
+        }
+        else
+        {
+            var iosDevice = new IOSDevice(e.ClientIp, e.DeviceName, e.ClientIp);
+            existing = new DeviceItemViewModel(iosDevice);
+            Devices.Add(existing);
+        }
+
         StatusMessage = $"iPhone kết nối AirPlay: {e.DeviceName}";
 
-        // Tự động mở session mirror
-        _ = StartMirroringAsync(vm);
+        // Tự động mở session mirror nếu chưa chạy
+        if (_activeSession == null || !_activeSession.IsRunning)
+        {
+            _ = StartMirroringAsync(existing);
+        }
     }
 
     private void HandleAirPlayClientDisconnected(string clientIp)

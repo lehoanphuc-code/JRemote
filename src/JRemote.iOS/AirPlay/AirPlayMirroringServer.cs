@@ -251,12 +251,28 @@ public class AirPlayMirroringServer : IAsyncDisposable
 
     private void ProcessVideoPayload(byte[] payload)
     {
+        if (payload.Length < 5) return;
+
         bool containsIdr = false;
         int naluSize = 0;
+        int nalCount = 0;
+
+        if (_receivedFrameCount < 5)
+        {
+            AppLogger.Log($"[AirPlay Video] Frame #{_receivedFrameCount + 1} Raw Payload ({payload.Length}B): {Convert.ToHexString(payload.AsSpan(0, Math.Min(16, payload.Length)))}");
+        }
+
         while (naluSize + 4 <= payload.Length)
         {
-            int ncLen = (payload[naluSize] << 24) | (payload[naluSize + 1] << 16) | (payload[naluSize + 2] << 8) | payload[naluSize + 3];
-            if (ncLen <= 0 || naluSize + 4 + ncLen > payload.Length) break;
+            int ncLen = System.Buffers.Binary.BinaryPrimitives.ReadInt32BigEndian(payload.AsSpan(naluSize, 4));
+            if (ncLen <= 0 || naluSize + 4 + ncLen > payload.Length)
+            {
+                if (_receivedFrameCount < 5 && nalCount == 0)
+                {
+                    AppLogger.Log($"[AirPlay Video-CẢNH BÁO] Không đọc được NALU: ncLen={ncLen}, naluSize={naluSize}, payloadLen={payload.Length}");
+                }
+                break;
+            }
 
             int nalType = payload[naluSize + 4] & 0x1F;
             if (nalType == 5)
@@ -269,6 +285,7 @@ public class AirPlayMirroringServer : IAsyncDisposable
             payload[naluSize + 2] = 0;
             payload[naluSize + 3] = 1;
             naluSize += 4 + ncLen;
+            nalCount++;
         }
 
         byte[] finalFrame;

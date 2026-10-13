@@ -19,6 +19,7 @@ public class AirPlayReceiverServer : IAsyncDisposable
     private TcpListener? _listener;
     private CancellationTokenSource? _cts;
     private bool _isRunning;
+    private string? _activeStreamingIp;
     private readonly AirPlaySecurity _security;
     private readonly AirPlayMirroringServer _mirroringServer;
 
@@ -237,13 +238,21 @@ public class AirPlayReceiverServer : IAsyncDisposable
                         responseBytes = BuildRtspSetupPlistResponse(protocol, cseq, _mirroringServer.Port);
                         AppLogger.Log($"[PHẢN HỒI] 200 OK cho SETUP (Cung cấp Mirroring DataPort {_mirroringServer.Port})");
 
-                        AppLogger.Log($"[AIRPLAY] === THIẾT BỊ BẮT ĐẦU PHIÊN PHẢN CHIẾU: {deviceName} ===");
-                        ClientConnected?.Invoke(this, new AirPlayClientConnectedEventArgs
+                        if (_activeStreamingIp != clientIp)
                         {
-                            ClientIp = clientIp,
-                            DeviceName = deviceName,
-                            ClientSocket = client
-                        });
+                            _activeStreamingIp = clientIp;
+                            AppLogger.Log($"[AIRPLAY] === THIẾT BỊ BẮT ĐẦU PHIÊN PHẢN CHIẾU: {deviceName} ===");
+                            ClientConnected?.Invoke(this, new AirPlayClientConnectedEventArgs
+                            {
+                                ClientIp = clientIp,
+                                DeviceName = deviceName,
+                                ClientSocket = client
+                            });
+                        }
+                        else
+                        {
+                            AppLogger.Log($"[AIRPLAY] Duy trì/cập nhật phiên phản chiếu hiện tại: {deviceName}");
+                        }
                     }
                     else if (method.Equals("RECORD", StringComparison.OrdinalIgnoreCase))
                     {
@@ -270,6 +279,7 @@ public class AirPlayReceiverServer : IAsyncDisposable
                         await stream.WriteAsync(responseBytes, cancellationToken);
                         await stream.FlushAsync(cancellationToken);
                         AppLogger.Log($"[AIRPLAY] Thiết bị yêu cầu TEARDOWN (Dừng phiên phản chiếu).");
+                        if (_activeStreamingIp == clientIp) _activeStreamingIp = null;
                         ClientDisconnected?.Invoke(this, clientIp);
                         return;
                     }
@@ -287,6 +297,7 @@ public class AirPlayReceiverServer : IAsyncDisposable
         catch (Exception ex)
         {
             AppLogger.Log($"[AirPlay TCP-LỖI] Kết nối {remoteEp} gặp sự cố: {ex.Message}");
+            if (_activeStreamingIp == clientIp) _activeStreamingIp = null;
             ClientDisconnected?.Invoke(this, clientIp);
         }
     }
