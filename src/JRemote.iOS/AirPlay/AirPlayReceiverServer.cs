@@ -22,6 +22,7 @@ public class AirPlayReceiverServer : IAsyncDisposable
     private string? _activeStreamingIp;
     private readonly AirPlaySecurity _security;
     private readonly AirPlayMirroringServer _mirroringServer;
+    private byte[]? _cachedDecryptedAesKey;
 
     public int Port { get; }
     public bool IsRunning => _isRunning;
@@ -200,19 +201,21 @@ public class AirPlayReceiverServer : IAsyncDisposable
                     }
                     else if (method.Equals("SETUP", StringComparison.OrdinalIgnoreCase))
                     {
-                        // 1. Lấy streamConnectionID từ URI (ví dụ rtsp://180.77.15.98/5605339878155243194)
+                        string? realStreamConnectionId = null;
+
+                        // 1. Lấy streamConnectionID từ URI dự phòng (ví dụ rtsp://180.77.15.98/5605339878155243194)
                         var streamConnectionId = "0";
                         var lastSlash = uri.LastIndexOf('/');
                         if (lastSlash >= 0 && lastSlash < uri.Length - 1)
                         {
                             var seg = uri.Substring(lastSlash + 1).Trim();
-                            if (ulong.TryParse(seg, out _))
+                            if (ulong.TryParse(seg, out var uSeg))
                             {
-                                streamConnectionId = seg;
+                                streamConnectionId = uSeg.ToString();
                             }
                         }
 
-                        // 2. Parse SETUP body (Binary Plist) để lấy ekey và ghi đè streamConnectionID nếu có
+                        // 2. Parse SETUP body (Binary Plist) để lấy ekey và streamConnectionID
                         if (bodyBytes.Length > 0)
                         {
                             try
@@ -221,9 +224,14 @@ public class AirPlayReceiverServer : IAsyncDisposable
                                 using var ms = new MemoryStream(bodyBytes);
                                 var dict = plistReader.ReadObject(ms);
 
+                                if (dict.Contains("ekey") && dict["ekey"] is byte[] ekey)
+                                {
+                                    _cachedDecryptedAesKey = _security.DecryptAesKey(ekey);
+                                }
+
                                 if (dict.Contains("streamConnectionID"))
                                 {
-                                    streamConnectionId = dict["streamConnectionID"]?.ToString() ?? streamConnectionId;
+                                    realStreamConnectionId = FormatStreamConnectionId(dict["streamConnectionID"]);
                                 }
 
                                 if (dict.Contains("streams") && dict["streams"] is System.Collections.IEnumerable streamsList)
@@ -232,21 +240,22 @@ public class AirPlayReceiverServer : IAsyncDisposable
                                     {
                                         if (stItem is System.Collections.IDictionary stDict && stDict.Contains("streamConnectionID"))
                                         {
-                                            streamConnectionId = stDict["streamConnectionID"]?.ToString() ?? streamConnectionId;
+                                            realStreamConnectionId = FormatStreamConnectionId(stDict["streamConnectionID"]);
                                         }
                                     }
                                 }
 
-                                AppLogger.Log($"[AirPlay SETUP] Xác định StreamConnectionID: '{streamConnectionId}' (từ URI: '{uri}')");
-
-                                if (dict.Contains("ekey") && dict["ekey"] is byte[] ekey)
+                                if (!string.IsNullOrEmpty(realStreamConnectionId) && realStreamConnectionId != "0")
                                 {
-                                    var aesKey = _security.DecryptAesKey(ekey);
+                                    streamConnectionId = realStreamConnectionId;
+                                }
 
-                                    if (_security.SharedSecret != null)
-                                    {
-                                        _mirroringServer.InitCipher(aesKey, _security.SharedSecret, streamConnectionId);
-                                    }
+                                AppLogger.Log($"[AirPlay SETUP] Xác định StreamConnectionID: '{streamConnectionId}' (từ Plist: '{realStreamConnectionId ?? "None"}', URI: '{uri}')");
+
+                                // Khởi tạo Decryptor: Sử dụng AES Key (đã giải mã và lưu cache) + ECDH SharedSecret + streamConnectionID
+                                if (_cachedDecryptedAesKey != null && _security.SharedSecret != null && !string.IsNullOrEmpty(streamConnectionId) && streamConnectionId != "0")
+                                {
+                                    _mirroringServer.InitCipher(_cachedDecryptedAesKey, _security.SharedSecret, streamConnectionId);
                                 }
                             }
                             catch (Exception ex)
@@ -296,6 +305,7 @@ public class AirPlayReceiverServer : IAsyncDisposable
                     }
                     else if (method.Equals("TEARDOWN", StringComparison.OrdinalIgnoreCase))
                     {
+                        _cachedDecryptedAesKey = null;
                         responseBytes = Encoding.UTF8.GetBytes($"{protocol} 200 OK\r\nCSeq: {cseq}\r\nServer: AirTunes/220.68\r\n\r\n");
                         await stream.WriteAsync(responseBytes, cancellationToken);
                         await stream.FlushAsync(cancellationToken);
@@ -492,6 +502,17 @@ public class AirPlayReceiverServer : IAsyncDisposable
                   $"Audio-Jack-Status: connected; type=analog\r\n" +
                   $"\r\n";
         return Encoding.UTF8.GetBytes(msg);
+    }
+
+    private static string FormatStreamConnectionId(object? val)
+    {
+        if (val == null) return "0";
+        if (val is ulong u) return u.ToString();
+        if (val is long l) return unchecked((ulong)l).ToString();
+        if (val is int i) return unchecked((uint)i).ToString();
+        if (val is uint ui) return ui.ToString();
+        if (ulong.TryParse(val.ToString(), out var parsed)) return parsed.ToString();
+        return val.ToString() ?? "0";
     }
 
     private static string GetMacAddress()

@@ -24,6 +24,8 @@ public class AirPlayMirroringServer : IAsyncDisposable
     private int _nextDecryptCount;
     private byte[]? _spsPps;
     private long _receivedFrameCount;
+    private byte[]? _currentKey;
+    private byte[]? _currentIV;
 
     public int Port { get; }
     public event EventHandler<byte[]>? VideoFrameReceived;
@@ -73,11 +75,17 @@ public class AirPlayMirroringServer : IAsyncDisposable
             Array.Copy(hash1, 0, decryptAesKey, 0, 16);
             Array.Copy(hash2, 0, decryptAesIV, 0, 16);
 
+            _currentKey = decryptAesKey;
+            _currentIV = decryptAesIV;
+
             var keyParameter = ParameterUtilities.CreateKeyParameter("AES", decryptAesKey);
             var cipherParameters = new ParametersWithIV(keyParameter, decryptAesIV, 0, 16);
 
             _aesCtrDecrypt = CipherUtilities.GetCipher("AES/CTR/NoPadding");
             _aesCtrDecrypt.Init(false, cipherParameters);
+            _nextDecryptCount = 0;
+            Array.Fill(_og, (byte)0);
+            _receivedFrameCount = 0;
             _isCipherReady = true;
 
             AppLogger.Log($"[AirPlay Video] Đã khởi tạo AES-CTR Video Decryptor cho Stream ID: '{streamConnectionId}' | Key: {Convert.ToHexString(decryptAesKey)} | IV: {Convert.ToHexString(decryptAesIV)}");
@@ -97,6 +105,19 @@ public class AirPlayMirroringServer : IAsyncDisposable
                 var client = await _listener!.AcceptTcpClientAsync(cancellationToken);
                 var remoteEp = client.Client.RemoteEndPoint?.ToString() ?? "Unknown";
                 AppLogger.Log($"[AirPlay Video] >>> Thiết bị đã kết nối kênh hình ảnh từ: {remoteEp}");
+
+                // Khởi tạo mới trạng thái Cipher cho luồng video kết nối mới
+                if (_currentKey != null && _currentIV != null)
+                {
+                    var keyParameter = ParameterUtilities.CreateKeyParameter("AES", _currentKey);
+                    var cipherParameters = new ParametersWithIV(keyParameter, _currentIV, 0, 16);
+                    _aesCtrDecrypt = CipherUtilities.GetCipher("AES/CTR/NoPadding");
+                    _aesCtrDecrypt.Init(false, cipherParameters);
+                    _nextDecryptCount = 0;
+                    Array.Fill(_og, (byte)0);
+                    _receivedFrameCount = 0;
+                    _isCipherReady = true;
+                }
 
                 _ = Task.Run(() => ReadVideoStreamAsync(client, cancellationToken), cancellationToken);
             }

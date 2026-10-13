@@ -72,7 +72,7 @@ public class OpenH264Decoder : IVideoDecoder
                     nalData,
                     0,
                     nalData.Length,
-                    noDelay: false,
+                    noDelay: true,
                     out DecodingState state,
                     out YUVImagePointer yuv);
 

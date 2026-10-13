@@ -1,4 +1,4 @@
-﻿﻿//-----------------------------------------------------------------------
+﻿//-----------------------------------------------------------------------
 // <copyright file="BinaryPlistReader.cs" company="Tasty Codes">
 //     Copyright (c) 2011 Chad Burggraf.
 //     Inspired by BinaryPListParser.java, copyright (c) 2005 Werner Randelshofer
@@ -267,7 +267,7 @@ namespace JRemote.iOS.PlayFair
                 case 4:
                     return (long)BitConverter.ToUInt32(buffer, 0);
                 case 8:
-                    return (long)BitConverter.ToUInt64(buffer, 0);
+                    return unchecked((long)BitConverter.ToUInt64(buffer, 0));
                 default:
                     throw new InvalidOperationException("Unsupported variable-length integer size: " + size);
             }
