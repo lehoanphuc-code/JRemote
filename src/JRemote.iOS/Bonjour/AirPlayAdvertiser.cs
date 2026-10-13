@@ -1,11 +1,14 @@
+using JRemote.Core.Logging;
 using Makaretu.Dns;
+using System.Net;
 using System.Net.NetworkInformation;
+using System.Net.Sockets;
 
 namespace JRemote.iOS.Bonjour;
 
 /// <summary>
 /// Fully-compliant Apple AirPlay & RAOP DNS-SD / mDNS service advertiser using Makaretu.Dns.
-/// Broadcasts PTR, SRV, TXT, and A records, and actively responds to iPhone mDNS queries.
+/// Selects physical Wi-Fi/LAN interfaces and ignores virtual/Hyper-V/TAP adapters.
 /// </summary>
 public class AirPlayAdvertiser : IAsyncDisposable
 {
@@ -30,14 +33,15 @@ public class AirPlayAdvertiser : IAsyncDisposable
 
         try
         {
-            var macWithColons = GetMacAddress(withColons: true);
-            var macNoColons = GetMacAddress(withColons: false);
+            var (activeIps, macWithColons, macNoColons, nicName) = GetPrimaryNetworkDetails();
+
+            AppLogger.Log($"[mDNS] Sử dụng card mạng: '{nicName}' | IP: {string.Join(", ", activeIps)} | MAC: {macWithColons}");
 
             _mdns = new MulticastService();
             _sd = new ServiceDiscovery(_mdns);
 
-            // 1. AirPlay Screen Mirroring Profile (_airplay._tcp)
-            _airPlayProfile = new ServiceProfile(ServerName, "_airplay._tcp", (ushort)AirPlayPort);
+            // 1. AirPlay Screen Mirroring Profile (_airplay._tcp) bound to real physical IPs
+            _airPlayProfile = new ServiceProfile(ServerName, "_airplay._tcp", (ushort)AirPlayPort, activeIps);
             _airPlayProfile.AddProperty("deviceid", macWithColons);
             _airPlayProfile.AddProperty("features", "0x5A7FFFF7,0x1E");
             _airPlayProfile.AddProperty("model", "AppleTV3,2");
@@ -47,9 +51,9 @@ public class AirPlayAdvertiser : IAsyncDisposable
             _airPlayProfile.AddProperty("pk", "b07727d6f6cd5e08b58ed52252c1d680f404040d30024e88ce265f04e1b60700");
             _airPlayProfile.AddProperty("pi", "b07727d6-f6cd-5e08-b58e-d52252c1d680");
 
-            // 2. RAOP Audio / Screen Streaming Profile (_raop._tcp)
+            // 2. RAOP Audio / Screen Streaming Profile (_raop._tcp) bound to real physical IPs
             var raopInstanceName = $"{macNoColons}@{ServerName}";
-            _raopProfile = new ServiceProfile(raopInstanceName, "_raop._tcp", (ushort)AirPlayPort);
+            _raopProfile = new ServiceProfile(raopInstanceName, "_raop._tcp", (ushort)AirPlayPort, activeIps);
             _raopProfile.AddProperty("ch", "2");
             _raopProfile.AddProperty("cn", "0,1,2,3");
             _raopProfile.AddProperty("da", "true");
@@ -80,10 +84,11 @@ public class AirPlayAdvertiser : IAsyncDisposable
             _sd.Announce(_raopProfile);
 
             _isAdvertising = true;
+            AppLogger.Log($"[mDNS] Đã phát sóng thành công dịch vụ AirPlay ('{ServerName}') và RAOP ('{raopInstanceName}') trên cổng {AirPlayPort}.");
         }
-        catch (Exception)
+        catch (Exception ex)
         {
-            // Resilient fallback
+            AppLogger.Log($"[mDNS-LỖI] Không thể phát sóng mDNS: {ex.Message}");
         }
 
         return Task.CompletedTask;
@@ -104,10 +109,11 @@ public class AirPlayAdvertiser : IAsyncDisposable
 
             _mdns?.Stop();
             _mdns?.Dispose();
+            AppLogger.Log("[mDNS] Đã dừng phát sóng AirPlay.");
         }
-        catch
+        catch (Exception ex)
         {
-            // Ignore shutdown errors
+            AppLogger.Log($"[mDNS] Lỗi dừng: {ex.Message}");
         }
         finally
         {
@@ -119,29 +125,51 @@ public class AirPlayAdvertiser : IAsyncDisposable
         return Task.CompletedTask;
     }
 
-    private static string GetMacAddress(bool withColons = true)
+    private static (List<IPAddress> Ips, string MacWithColons, string MacNoColons, string NicName) GetPrimaryNetworkDetails()
     {
-        try
-        {
-            var nic = NetworkInterface.GetAllNetworkInterfaces()
-                .FirstOrDefault(n => n.OperationalStatus == OperationalStatus.Up &&
-                                     n.NetworkInterfaceType != NetworkInterfaceType.Loopback &&
-                                     n.GetPhysicalAddress().GetAddressBytes().Length == 6);
+        var candidateNics = NetworkInterface.GetAllNetworkInterfaces()
+            .Where(n => n.OperationalStatus == OperationalStatus.Up &&
+                        n.NetworkInterfaceType != NetworkInterfaceType.Loopback &&
+                        !n.Description.Contains("Virtual", StringComparison.OrdinalIgnoreCase) &&
+                        !n.Description.Contains("vEthernet", StringComparison.OrdinalIgnoreCase) &&
+                        !n.Description.Contains("Hyper-V", StringComparison.OrdinalIgnoreCase) &&
+                        !n.Description.Contains("TAP", StringComparison.OrdinalIgnoreCase) &&
+                        !n.Description.Contains("Wintun", StringComparison.OrdinalIgnoreCase) &&
+                        !n.Name.Contains("vEthernet", StringComparison.OrdinalIgnoreCase) &&
+                        !n.Name.Contains("Bluetooth", StringComparison.OrdinalIgnoreCase))
+            .ToList();
 
-            if (nic != null)
+        // Ưu tiên card Wi-Fi hoặc card có Gateway IPv4
+        var primaryNic = candidateNics.FirstOrDefault(n => n.NetworkInterfaceType == NetworkInterfaceType.Wireless80211)
+                         ?? candidateNics.FirstOrDefault(n => n.GetIPProperties().GatewayAddresses.Count > 0)
+                         ?? candidateNics.FirstOrDefault()
+                         ?? NetworkInterface.GetAllNetworkInterfaces().First();
+
+        var ipList = new List<IPAddress>();
+        foreach (var unicast in primaryNic.GetIPProperties().UnicastAddresses)
+        {
+            if (unicast.Address.AddressFamily == AddressFamily.InterNetwork &&
+                !unicast.Address.ToString().StartsWith("169.254")) // Bỏ qua link-local APIPA
             {
-                var bytes = nic.GetPhysicalAddress().GetAddressBytes();
-                return withColons
-                    ? string.Join(":", bytes.Select(b => b.ToString("X2")))
-                    : string.Concat(bytes.Select(b => b.ToString("X2")));
+                ipList.Add(unicast.Address);
             }
         }
-        catch
+
+        if (ipList.Count == 0)
         {
-            // Ignore
+            ipList.Add(IPAddress.Loopback);
         }
 
-        return withColons ? "00:11:22:33:44:55" : "001122334455";
+        var macBytes = primaryNic.GetPhysicalAddress().GetAddressBytes();
+        var macWithColons = macBytes.Length == 6
+            ? string.Join(":", macBytes.Select(b => b.ToString("X2")))
+            : "9C:2F:9D:A5:95:7B";
+
+        var macNoColons = macBytes.Length == 6
+            ? string.Concat(macBytes.Select(b => b.ToString("X2")))
+            : "9C2F9DA5957B";
+
+        return (ipList, macWithColons, macNoColons, primaryNic.Name);
     }
 
     public async ValueTask DisposeAsync()

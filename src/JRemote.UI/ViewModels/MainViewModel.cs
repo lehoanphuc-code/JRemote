@@ -4,6 +4,7 @@ using JRemote.Android.Adb;
 using JRemote.Android.Devices;
 using JRemote.Android.Session;
 using JRemote.Core.Interfaces;
+using JRemote.Core.Logging;
 using JRemote.Core.Models;
 using JRemote.iOS.AirPlay;
 using JRemote.iOS.Bonjour;
@@ -59,8 +60,20 @@ public partial class MainViewModel : ObservableObject, IAsyncDisposable
     [ObservableProperty]
     private string _statusMessage = "Sẵn sàng";
 
+    [ObservableProperty]
+    private ObservableCollection<string> _logEntries = new();
+
     public MainViewModel()
     {
+        AppLogger.Initialize();
+        AppLogger.LogAdded += line =>
+        {
+            Application.Current?.Dispatcher?.InvokeAsync(() =>
+            {
+                LogEntries.Add(line);
+                if (LogEntries.Count > 300) LogEntries.RemoveAt(0);
+            });
+        };
         _adbService = new AdbService();
         _airPlayAdvertiser = new AirPlayAdvertiser();
         _airPlayReceiver = new AirPlayReceiverServer();
@@ -75,7 +88,6 @@ public partial class MainViewModel : ObservableObject, IAsyncDisposable
         _adbService.DeviceDisconnected += async (s, d) => await Application.Current.Dispatcher.InvokeAsync(RefreshDevicesAsync);
         _airPlayReceiver.ClientConnected += async (s, e) => await Application.Current.Dispatcher.InvokeAsync(() => HandleAirPlayClientConnected(e));
         _airPlayReceiver.ClientDisconnected += async (s, ip) => await Application.Current.Dispatcher.InvokeAsync(() => HandleAirPlayClientDisconnected(ip));
-        _airPlayReceiver.LogMessage += async (s, msg) => await Application.Current.Dispatcher.InvokeAsync(() => StatusMessage = msg);
     }
 
     public async Task InitializeAsync()
@@ -371,6 +383,20 @@ public partial class MainViewModel : ObservableObject, IAsyncDisposable
     public void ToggleAlwaysOnTop()
     {
         IsAlwaysOnTop = !IsAlwaysOnTop;
+    }
+
+    [RelayCommand]
+    public void ClearLogs()
+    {
+        LogEntries.Clear();
+    }
+
+    [RelayCommand]
+    public void CopyLogs()
+    {
+        var allText = string.Join(Environment.NewLine, LogEntries);
+        Clipboard.SetText(allText);
+        StatusMessage = "Đã sao chép toàn bộ nhật ký vào Clipboard!";
     }
 
     public async ValueTask DisposeAsync()

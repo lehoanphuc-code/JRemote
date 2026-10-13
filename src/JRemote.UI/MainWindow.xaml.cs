@@ -20,6 +20,13 @@ public partial class MainWindow : FluentWindow
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
+        ViewModel.LogEntries.CollectionChanged += (s, ev) =>
+        {
+            if (LogsListBox.Items.Count > 0)
+            {
+                LogsListBox.ScrollIntoView(LogsListBox.Items[^1]);
+            }
+        };
         await ViewModel.InitializeAsync();
     }
 

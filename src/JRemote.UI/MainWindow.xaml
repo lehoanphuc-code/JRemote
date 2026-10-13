@@ -166,18 +166,70 @@
             <!-- Splitter Separator -->
             <GridSplitter Grid.Column="1" HorizontalAlignment="Stretch" Background="Transparent" />
 
-            <!-- Right Area: Mirroring Viewport & Floating Toolbar -->
+            <!-- Right Area: Mirroring Viewport & Floating Toolbar / Live Logs -->
             <Grid Grid.Column="2">
-                <!-- Empty State (When no active mirror) -->
-                <Border Background="#181a1f" CornerRadius="12" BorderBrush="#252830" BorderThickness="1"
-                        Visibility="{Binding IsMirroringActive, Converter={x:Null}}">
-                    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
-                        <ui:SymbolIcon Symbol="ScreenSearch24" FontSize="64" Foreground="#444b58" HorizontalAlignment="Center" Margin="0,0,0,16" />
-                        <TextBlock Text="Chưa Bắt Đầu Phản Chiếu" FontSize="18" FontWeight="SemiBold" Foreground="#888888" HorizontalAlignment="Center" Margin="0,0,0,8" />
-                        <TextBlock Text="Chọn một thiết bị từ danh sách bên trái hoặc kết nối AirPlay từ iPhone để bắt đầu xem và điều khiển."
-                                   FontSize="13" Foreground="#666666" HorizontalAlignment="Center" TextAlignment="Center" MaxWidth="400" TextWrapping="Wrap" />
-                    </StackPanel>
-                </Border>
+                <!-- When no active mirror: Show Guidance & Live Log Console -->
+                <Grid Visibility="{Binding IsMirroringActive, Converter={x:Null}}">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <!-- Top Guidance Banner -->
+                    <Border Grid.Row="0" Background="#181a1f" CornerRadius="8" Padding="14,10" Margin="0,0,0,10" BorderBrush="#252830" BorderThickness="1">
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <ui:SymbolIcon Symbol="ScreenSearch24" FontSize="24" Foreground="#38ef7d" Margin="0,0,10,0" />
+                            <StackPanel>
+                                <TextBlock Text="Đang chờ kết nối từ iPhone / Android..." FontSize="14" FontWeight="SemiBold" Foreground="#ffffff" />
+                                <TextBlock Text="Mở Control Center trên iPhone ➔ Chọn 'Phản chiếu màn hình' ➔ Nhấn 'JRemote-PC'. Nhật ký kết nối sẽ hiển thị bên dưới:"
+                                           FontSize="12" Foreground="#888888" />
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Live Log Console -->
+                    <Border Grid.Row="1" Background="#0e1014" CornerRadius="8" BorderBrush="#252830" BorderThickness="1" Padding="12">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+
+                            <Grid Grid.Row="0" Margin="0,0,0,8">
+                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                    <ui:SymbolIcon Symbol="TextBulletList24" FontSize="16" Foreground="#61afef" Margin="0,0,6,0" />
+                                    <TextBlock Text="Nhật Ký Kết Nối Thời Gian Thực (Live Logs)" FontWeight="SemiBold" FontSize="13" Foreground="#abb2bf" />
+                                </StackPanel>
+
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                    <ui:Button Appearance="Secondary" FontSize="11" Padding="8,3" Margin="0,0,6,0"
+                                               Content="Sao chép"
+                                               Command="{Binding CopyLogsCommand}" />
+                                    <ui:Button Appearance="Secondary" FontSize="11" Padding="8,3"
+                                               Content="Xóa"
+                                               Command="{Binding ClearLogsCommand}" />
+                                </StackPanel>
+                            </Grid>
+
+                            <!-- Log Entries List with monospace styling -->
+                            <ListBox Grid.Row="1"
+                                     x:Name="LogsListBox"
+                                     ItemsSource="{Binding LogEntries}"
+                                     Background="#0b0d10"
+                                     BorderBrush="#1a1c22"
+                                     BorderThickness="1"
+                                     FontFamily="Consolas, Cascadia Code, Courier New"
+                                     FontSize="11"
+                                     Foreground="#98c379">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding}" TextWrapping="Wrap" />
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                        </Grid>
+                    </Border>
+                </Grid>
 
                 <!-- Active Mirroring Viewport -->
                 <Grid Visibility="{Binding IsMirroringActive, Converter={x:Null}}">
