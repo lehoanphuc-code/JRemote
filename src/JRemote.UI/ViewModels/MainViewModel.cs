@@ -63,6 +63,19 @@ public partial class MainViewModel : ObservableObject, IAsyncDisposable
     [ObservableProperty]
     private ObservableCollection<string> _logEntries = new();
 
+    [ObservableProperty]
+    private bool _showLogsTab = true; // Mặc định hiển thị tab Nhật Ký (Logs)
+
+    [RelayCommand]
+    public void SelectLogsView() => ShowLogsTab = true;
+
+    [RelayCommand]
+    public void SelectMirroringView()
+    {
+        if (IsMirroringActive)
+            ShowLogsTab = false;
+    }
+
     public MainViewModel()
     {
         AppLogger.Initialize();
@@ -75,8 +88,9 @@ public partial class MainViewModel : ObservableObject, IAsyncDisposable
             });
         };
         _adbService = new AdbService();
-        _airPlayAdvertiser = new AirPlayAdvertiser();
-        _airPlayReceiver = new AirPlayReceiverServer();
+        var airPlaySecurity = new AirPlaySecurity();
+        _airPlayAdvertiser = new AirPlayAdvertiser(airPlaySecurity);
+        _airPlayReceiver = new AirPlayReceiverServer(airPlaySecurity);
         _renderer = new WriteableBitmapRenderer();
 
         _renderer.BitmapCreatedOrResized += (s, bmp) =>
@@ -286,6 +300,7 @@ public partial class MainViewModel : ObservableObject, IAsyncDisposable
 
             ActiveMirroringDevice = deviceVm;
             IsMirroringActive = true;
+            ShowLogsTab = false; // Tự động hiển thị màn hình phản chiếu
             StatusMessage = $"Đang phản chiếu: {deviceVm.Name}";
         }
         catch (Exception ex)
@@ -306,6 +321,7 @@ public partial class MainViewModel : ObservableObject, IAsyncDisposable
 
         ActiveMirroringDevice = null;
         IsMirroringActive = false;
+        ShowLogsTab = true; // Quay lại hiển thị nhật ký
         StatusMessage = "Đã dừng phản chiếu.";
     }
 

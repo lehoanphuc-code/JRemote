@@ -1,4 +1,5 @@
 using JRemote.Core.Logging;
+using JRemote.iOS.AirPlay;
 using Makaretu.Dns;
 using System.Net;
 using System.Net.NetworkInformation;
@@ -18,11 +19,13 @@ public class AirPlayAdvertiser : IAsyncDisposable
     private ServiceProfile? _raopProfile;
     private bool _isAdvertising;
 
+    public AirPlaySecurity Security { get; }
     public string ServerName { get; }
     public int AirPlayPort { get; }
 
-    public AirPlayAdvertiser(string serverName = "JRemote-PC", int airPlayPort = 7000)
+    public AirPlayAdvertiser(AirPlaySecurity? security = null, string serverName = "JRemote-PC", int airPlayPort = 7000)
     {
+        Security = security ?? new AirPlaySecurity();
         ServerName = serverName;
         AirPlayPort = airPlayPort;
     }
@@ -40,16 +43,18 @@ public class AirPlayAdvertiser : IAsyncDisposable
             _mdns = new MulticastService();
             _sd = new ServiceDiscovery(_mdns);
 
+            var pkHex = Security.EdPublicKeyHex;
+
             // 1. AirPlay Screen Mirroring Profile (_airplay._tcp) bound to real physical IPs
             _airPlayProfile = new ServiceProfile(ServerName, "_airplay._tcp", (ushort)AirPlayPort, activeIps);
             _airPlayProfile.AddProperty("deviceid", macWithColons);
-            _airPlayProfile.AddProperty("features", "0x5A7FFFF7,0x1E");
+            _airPlayProfile.AddProperty("features", "0x5A7FFEE6,0x1E");
             _airPlayProfile.AddProperty("model", "AppleTV3,2");
             _airPlayProfile.AddProperty("srcvers", "220.68");
             _airPlayProfile.AddProperty("flags", "0x44");
             _airPlayProfile.AddProperty("vv", "2");
-            _airPlayProfile.AddProperty("pk", "b07727d6f6cd5e08b58ed52252c1d680f404040d30024e88ce265f04e1b60700");
-            _airPlayProfile.AddProperty("pi", "b07727d6-f6cd-5e08-b58e-d52252c1d680");
+            _airPlayProfile.AddProperty("pk", pkHex);
+            _airPlayProfile.AddProperty("pi", "2e388006-13ba-4041-9a67-25dd4a43d536");
 
             // 2. RAOP Audio / Screen Streaming Profile (_raop._tcp) bound to real physical IPs
             var raopInstanceName = $"{macNoColons}@{ServerName}";
@@ -59,7 +64,7 @@ public class AirPlayAdvertiser : IAsyncDisposable
             _raopProfile.AddProperty("da", "true");
             _raopProfile.AddProperty("et", "0,3,5");
             _raopProfile.AddProperty("vv", "2");
-            _raopProfile.AddProperty("ft", "0x5A7FFFF7,0x1E");
+            _raopProfile.AddProperty("ft", "0x5A7FFEE6,0x1E");
             _raopProfile.AddProperty("am", "AppleTV3,2");
             _raopProfile.AddProperty("md", "0,1,2");
             _raopProfile.AddProperty("rhd", "5.6.0.0");
@@ -72,7 +77,7 @@ public class AirPlayAdvertiser : IAsyncDisposable
             _raopProfile.AddProperty("sf", "0x4");
             _raopProfile.AddProperty("vs", "220.68");
             _raopProfile.AddProperty("vn", "65537");
-            _raopProfile.AddProperty("pk", "b07727d6f6cd5e08b58ed52252c1d680f404040d30024e88ce265f04e1b60700");
+            _raopProfile.AddProperty("pk", pkHex);
 
             // Start mDNS listener & advertise services
             _mdns.Start();
