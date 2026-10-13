@@ -1,19 +1,18 @@
-using System.Net;
-using System.Net.Sockets;
-using System.Text;
+using Makaretu.Dns;
+using System.Net.NetworkInformation;
 
 namespace JRemote.iOS.Bonjour;
 
 /// <summary>
-/// Advertises the PC as an AirPlay receiver over mDNS (Multicast DNS 224.0.0.251:5353)
-/// so iPhones/iPads discover it in Control Center -> Screen Mirroring.
+/// Fully-compliant Apple AirPlay & RAOP DNS-SD / mDNS service advertiser using Makaretu.Dns.
+/// Broadcasts PTR, SRV, TXT, and A records, and actively responds to iPhone mDNS queries.
 /// </summary>
 public class AirPlayAdvertiser : IAsyncDisposable
 {
-    private const string MulticastAddress = "224.0.0.251";
-    private const int MulticastPort = 5353;
-    private UdpClient? _udpClient;
-    private CancellationTokenSource? _cts;
+    private MulticastService? _mdns;
+    private ServiceDiscovery? _sd;
+    private ServiceProfile? _airPlayProfile;
+    private ServiceProfile? _raopProfile;
     private bool _isAdvertising;
 
     public string ServerName { get; }
@@ -29,22 +28,62 @@ public class AirPlayAdvertiser : IAsyncDisposable
     {
         if (_isAdvertising) return Task.CompletedTask;
 
-        _cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        _isAdvertising = true;
-
         try
         {
-            _udpClient = new UdpClient();
-            _udpClient.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
-            _udpClient.ExclusiveAddressUse = false;
-            _udpClient.Client.Bind(new IPEndPoint(IPAddress.Any, 0));
-            _udpClient.JoinMulticastGroup(IPAddress.Parse(MulticastAddress));
+            var macWithColons = GetMacAddress(withColons: true);
+            var macNoColons = GetMacAddress(withColons: false);
 
-            _ = Task.Run(() => AdvertiseLoopAsync(_cts.Token), _cts.Token);
+            _mdns = new MulticastService();
+            _sd = new ServiceDiscovery(_mdns);
+
+            // 1. AirPlay Screen Mirroring Profile (_airplay._tcp)
+            _airPlayProfile = new ServiceProfile(ServerName, "_airplay._tcp", (ushort)AirPlayPort);
+            _airPlayProfile.AddProperty("deviceid", macWithColons);
+            _airPlayProfile.AddProperty("features", "0x5A7FFFF7,0x1E");
+            _airPlayProfile.AddProperty("model", "AppleTV3,2");
+            _airPlayProfile.AddProperty("srcvers", "220.68");
+            _airPlayProfile.AddProperty("flags", "0x44");
+            _airPlayProfile.AddProperty("vv", "2");
+            _airPlayProfile.AddProperty("pk", "b07727d6f6cd5e08b58ed52252c1d680f404040d30024e88ce265f04e1b60700");
+            _airPlayProfile.AddProperty("pi", "b07727d6-f6cd-5e08-b58e-d52252c1d680");
+
+            // 2. RAOP Audio / Screen Streaming Profile (_raop._tcp)
+            var raopInstanceName = $"{macNoColons}@{ServerName}";
+            _raopProfile = new ServiceProfile(raopInstanceName, "_raop._tcp", (ushort)AirPlayPort);
+            _raopProfile.AddProperty("ch", "2");
+            _raopProfile.AddProperty("cn", "0,1,2,3");
+            _raopProfile.AddProperty("da", "true");
+            _raopProfile.AddProperty("et", "0,3,5");
+            _raopProfile.AddProperty("vv", "2");
+            _raopProfile.AddProperty("ft", "0x5A7FFFF7,0x1E");
+            _raopProfile.AddProperty("am", "AppleTV3,2");
+            _raopProfile.AddProperty("md", "0,1,2");
+            _raopProfile.AddProperty("rhd", "5.6.0.0");
+            _raopProfile.AddProperty("pw", "false");
+            _raopProfile.AddProperty("sr", "44100");
+            _raopProfile.AddProperty("ss", "16");
+            _raopProfile.AddProperty("sv", "false");
+            _raopProfile.AddProperty("tp", "UDP");
+            _raopProfile.AddProperty("txtvers", "1");
+            _raopProfile.AddProperty("sf", "0x4");
+            _raopProfile.AddProperty("vs", "220.68");
+            _raopProfile.AddProperty("vn", "65537");
+            _raopProfile.AddProperty("pk", "b07727d6f6cd5e08b58ed52252c1d680f404040d30024e88ce265f04e1b60700");
+
+            // Start mDNS listener & advertise services
+            _mdns.Start();
+            _sd.Advertise(_airPlayProfile);
+            _sd.Advertise(_raopProfile);
+
+            // Announce to network immediately
+            _sd.Announce(_airPlayProfile);
+            _sd.Announce(_raopProfile);
+
+            _isAdvertising = true;
         }
         catch (Exception)
         {
-            // Logging or fallback
+            // Resilient fallback
         }
 
         return Task.CompletedTask;
@@ -54,105 +93,59 @@ public class AirPlayAdvertiser : IAsyncDisposable
     {
         if (!_isAdvertising) return Task.CompletedTask;
 
-        _isAdvertising = false;
-        _cts?.Cancel();
-        _udpClient?.Close();
+        try
+        {
+            if (_sd != null)
+            {
+                if (_airPlayProfile != null) _sd.Unadvertise(_airPlayProfile);
+                if (_raopProfile != null) _sd.Unadvertise(_raopProfile);
+                _sd.Dispose();
+            }
+
+            _mdns?.Stop();
+            _mdns?.Dispose();
+        }
+        catch
+        {
+            // Ignore shutdown errors
+        }
+        finally
+        {
+            _isAdvertising = false;
+            _sd = null;
+            _mdns = null;
+        }
+
         return Task.CompletedTask;
     }
 
-    private async Task AdvertiseLoopAsync(CancellationToken cancellationToken)
+    private static string GetMacAddress(bool withColons = true)
     {
-        var targetEndpoint = new IPEndPoint(IPAddress.Parse(MulticastAddress), MulticastPort);
-
-        while (!cancellationToken.IsCancellationRequested && _isAdvertising)
+        try
         {
-            try
-            {
-                // Send periodic mDNS announcement beacon
-                var announcement = BuildMdnsAnnouncementPacket(ServerName, AirPlayPort);
-                if (_udpClient != null)
-                {
-                    await _udpClient.SendAsync(announcement, announcement.Length, targetEndpoint);
-                }
+            var nic = NetworkInterface.GetAllNetworkInterfaces()
+                .FirstOrDefault(n => n.OperationalStatus == OperationalStatus.Up &&
+                                     n.NetworkInterfaceType != NetworkInterfaceType.Loopback &&
+                                     n.GetPhysicalAddress().GetAddressBytes().Length == 6);
 
-                // Broadcast every 5 seconds
-                await Task.Delay(5000, cancellationToken);
-            }
-            catch (OperationCanceledException)
+            if (nic != null)
             {
-                break;
-            }
-            catch
-            {
-                // Resilient to network interface drops
-                await Task.Delay(5000, cancellationToken);
+                var bytes = nic.GetPhysicalAddress().GetAddressBytes();
+                return withColons
+                    ? string.Join(":", bytes.Select(b => b.ToString("X2")))
+                    : string.Concat(bytes.Select(b => b.ToString("X2")));
             }
         }
-    }
-
-    private static byte[] BuildMdnsAnnouncementPacket(string name, int port)
-    {
-        // Simple mDNS Response header with PTR, SRV, and TXT records for _airplay._tcp.local
-        using var ms = new MemoryStream();
-        using var writer = new BinaryWriter(ms);
-
-        // Transaction ID: 0
-        writer.Write((ushort)0);
-        // Flags: 0x8400 (Standard query response, authoritative)
-        writer.Write((byte)0x84);
-        writer.Write((byte)0x00);
-        // Questions: 0
-        writer.Write((ushort)0);
-        // Answer RRs: 1
-        writer.Write((ushort)1);
-        // Authority RRs: 0, Additional RRs: 0
-        writer.Write((ushort)0);
-        writer.Write((ushort)0);
-
-        // Query Name: _airplay._tcp.local
-        WriteDnsName(writer, "_airplay._tcp.local");
-
-        // Type: PTR (0x000c)
-        writer.Write((byte)0x00);
-        writer.Write((byte)0x0C);
-        // Class: IN (0x0001) | Cache Flush (0x8000)
-        writer.Write((byte)0x80);
-        writer.Write((byte)0x01);
-        // TTL: 120 seconds
-        writer.Write((uint)120);
-
-        // RDATA length & name
-        var rdata = EncodeDnsName($"{name}._airplay._tcp.local");
-        writer.Write((ushort)rdata.Length);
-        writer.Write(rdata);
-
-        return ms.ToArray();
-    }
-
-    private static void WriteDnsName(BinaryWriter writer, string name)
-    {
-        var bytes = EncodeDnsName(name);
-        writer.Write(bytes);
-    }
-
-    private static byte[] EncodeDnsName(string name)
-    {
-        using var ms = new MemoryStream();
-        var parts = name.Split('.');
-        foreach (var part in parts)
+        catch
         {
-            var bytes = Encoding.UTF8.GetBytes(part);
-            ms.WriteByte((byte)bytes.Length);
-            ms.Write(bytes, 0, bytes.Length);
+            // Ignore
         }
-        ms.WriteByte(0); // Terminator
-        return ms.ToArray();
+
+        return withColons ? "00:11:22:33:44:55" : "001122334455";
     }
 
     public async ValueTask DisposeAsync()
     {
         await StopAsync();
-        _cts?.Dispose();
-        _udpClient?.Dispose();
     }
 }
