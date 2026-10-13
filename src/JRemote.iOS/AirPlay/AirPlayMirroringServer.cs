@@ -80,7 +80,7 @@ public class AirPlayMirroringServer : IAsyncDisposable
             _aesCtrDecrypt.Init(false, cipherParameters);
             _isCipherReady = true;
 
-            AppLogger.Log($"[AirPlay Video] Đã khởi tạo AES-CTR Video Decryptor cho Stream ID: {streamConnectionId}");
+            AppLogger.Log($"[AirPlay Video] Đã khởi tạo AES-CTR Video Decryptor cho Stream ID: '{streamConnectionId}' | Key: {Convert.ToHexString(decryptAesKey)} | IV: {Convert.ToHexString(decryptAesIV)}");
         }
         catch (Exception ex)
         {
@@ -174,6 +174,11 @@ public class AirPlayMirroringServer : IAsyncDisposable
     {
         if (_aesCtrDecrypt == null) return;
 
+        if (_receivedFrameCount < 3)
+        {
+            AppLogger.Log($"[AirPlay Decrypt] Frame #{_receivedFrameCount + 1} BEFORE ({videoData.Length}B): {Convert.ToHexString(videoData.AsSpan(0, Math.Min(16, videoData.Length)))}");
+        }
+
         if (_nextDecryptCount > 0)
         {
             for (int i = 0; i < _nextDecryptCount; i++)
@@ -198,6 +203,11 @@ public class AirPlayMirroringServer : IAsyncDisposable
             _aesCtrDecrypt.ProcessBytes(_og, 0, 16, _og, 0);
             Array.Copy(_og, 0, videoData, restStart, restLen);
             _nextDecryptCount = 16 - restLen;
+        }
+
+        if (_receivedFrameCount < 3)
+        {
+            AppLogger.Log($"[AirPlay Decrypt] Frame #{_receivedFrameCount + 1} AFTER  ({videoData.Length}B): {Convert.ToHexString(videoData.AsSpan(0, Math.Min(16, videoData.Length)))}");
         }
     }
 

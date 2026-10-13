@@ -200,8 +200,19 @@ public class AirPlayReceiverServer : IAsyncDisposable
                     }
                     else if (method.Equals("SETUP", StringComparison.OrdinalIgnoreCase))
                     {
-                        // Parse SETUP body (Binary Plist) để lấy streamConnectionID & ekey
+                        // 1. Lấy streamConnectionID từ URI (ví dụ rtsp://180.77.15.98/5605339878155243194)
                         var streamConnectionId = "0";
+                        var lastSlash = uri.LastIndexOf('/');
+                        if (lastSlash >= 0 && lastSlash < uri.Length - 1)
+                        {
+                            var seg = uri.Substring(lastSlash + 1).Trim();
+                            if (ulong.TryParse(seg, out _))
+                            {
+                                streamConnectionId = seg;
+                            }
+                        }
+
+                        // 2. Parse SETUP body (Binary Plist) để lấy ekey và ghi đè streamConnectionID nếu có
                         if (bodyBytes.Length > 0)
                         {
                             try
@@ -210,17 +221,27 @@ public class AirPlayReceiverServer : IAsyncDisposable
                                 using var ms = new MemoryStream(bodyBytes);
                                 var dict = plistReader.ReadObject(ms);
 
+                                if (dict.Contains("streamConnectionID"))
+                                {
+                                    streamConnectionId = dict["streamConnectionID"]?.ToString() ?? streamConnectionId;
+                                }
+
+                                if (dict.Contains("streams") && dict["streams"] is System.Collections.IEnumerable streamsList)
+                                {
+                                    foreach (var stItem in streamsList)
+                                    {
+                                        if (stItem is System.Collections.IDictionary stDict && stDict.Contains("streamConnectionID"))
+                                        {
+                                            streamConnectionId = stDict["streamConnectionID"]?.ToString() ?? streamConnectionId;
+                                        }
+                                    }
+                                }
+
+                                AppLogger.Log($"[AirPlay SETUP] Xác định StreamConnectionID: '{streamConnectionId}' (từ URI: '{uri}')");
+
                                 if (dict.Contains("ekey") && dict["ekey"] is byte[] ekey)
                                 {
                                     var aesKey = _security.DecryptAesKey(ekey);
-
-                                    if (dict.Contains("streams") && dict["streams"] is object[] streamsArr && streamsArr.Length > 0)
-                                    {
-                                        if (streamsArr[0] is System.Collections.IDictionary st && st.Contains("streamConnectionID"))
-                                        {
-                                            streamConnectionId = Convert.ToUInt64(st["streamConnectionID"]).ToString();
-                                        }
-                                    }
 
                                     if (_security.SharedSecret != null)
                                     {
@@ -230,7 +251,7 @@ public class AirPlayReceiverServer : IAsyncDisposable
                             }
                             catch (Exception ex)
                             {
-                                AppLogger.Log($"[AirPlay SETUP] Thông tin bplist: {ex.Message}");
+                                AppLogger.Log($"[AirPlay SETUP-LỖI] Parse bplist: {ex.Message}");
                             }
                         }
 
