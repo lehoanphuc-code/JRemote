@@ -1,4 +1,5 @@
 using JRemote.Core.Logging;
+using JRemote.iOS.PlayFair;
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
@@ -19,23 +20,28 @@ public class AirPlayReceiverServer : IAsyncDisposable
     private CancellationTokenSource? _cts;
     private bool _isRunning;
     private readonly AirPlaySecurity _security;
+    private readonly AirPlayMirroringServer _mirroringServer;
 
     public int Port { get; }
     public bool IsRunning => _isRunning;
     public AirPlaySecurity Security => _security;
+    public AirPlayMirroringServer MirroringServer => _mirroringServer;
 
     public event EventHandler<AirPlayClientConnectedEventArgs>? ClientConnected;
     public event EventHandler<string>? ClientDisconnected;
+    public event EventHandler<byte[]>? VideoFrameReceived;
 
-    public AirPlayReceiverServer(AirPlaySecurity? security = null, int port = 7000)
+    public AirPlayReceiverServer(AirPlaySecurity? security = null, int port = 7000, int videoDataPort = 7011)
     {
         _security = security ?? new AirPlaySecurity();
         Port = port;
+        _mirroringServer = new AirPlayMirroringServer(videoDataPort);
+        _mirroringServer.VideoFrameReceived += (s, frame) => VideoFrameReceived?.Invoke(this, frame);
     }
 
-    public Task StartAsync(CancellationToken cancellationToken = default)
+    public async Task StartAsync(CancellationToken cancellationToken = default)
     {
-        if (_isRunning) return Task.CompletedTask;
+        if (_isRunning) return;
 
         try
         {
@@ -45,6 +51,9 @@ public class AirPlayReceiverServer : IAsyncDisposable
             _listener.Start();
             _isRunning = true;
 
+            // Khởi động server video trên cổng dataPort
+            await _mirroringServer.StartAsync(cancellationToken);
+
             AppLogger.Log($"[AirPlay Server] Đang lắng nghe kết nối TCP trên cổng {Port}...");
             _ = Task.Run(() => AcceptLoopAsync(_cts.Token), _cts.Token);
         }
@@ -52,19 +61,17 @@ public class AirPlayReceiverServer : IAsyncDisposable
         {
             AppLogger.Log($"[AirPlay Server-LỖI] Không thể mở cổng {Port}: {ex.Message}");
         }
-
-        return Task.CompletedTask;
     }
 
-    public Task StopAsync()
+    public async Task StopAsync()
     {
-        if (!_isRunning) return Task.CompletedTask;
+        if (!_isRunning) return;
 
         _isRunning = false;
         _cts?.Cancel();
         try { _listener?.Stop(); } catch { }
+        await _mirroringServer.DisposeAsync();
         AppLogger.Log("[AirPlay Server] Đã dừng server.");
-        return Task.CompletedTask;
     }
 
     private async Task AcceptLoopAsync(CancellationToken cancellationToken)
@@ -96,7 +103,6 @@ public class AirPlayReceiverServer : IAsyncDisposable
         var clientIp = ((IPEndPoint)client.Client.RemoteEndPoint!).Address.ToString();
         var deviceName = $"iPhone [{clientIp}]";
 
-        // Buffer tích lũy dữ liệu nhận từ socket
         var receiveBuffer = new byte[65536];
         int bufferCount = 0;
 
@@ -112,16 +118,10 @@ public class AirPlayReceiverServer : IAsyncDisposable
                 }
                 bufferCount += bytesRead;
 
-                // Xử lý các request có trong buffer (có thể nhiều request đến liên tiếp)
                 while (bufferCount > 0)
                 {
-                    // 1. Tìm vị trí kết thúc Header (\r\n\r\n)
                     int headerEndIndex = FindHeaderEnd(receiveBuffer, bufferCount);
-                    if (headerEndIndex < 0)
-                    {
-                        // Chưa nhận đủ header, tiếp tục đọc socket
-                        break;
-                    }
+                    if (headerEndIndex < 0) break;
 
                     int headerLength = headerEndIndex + 4;
                     var headerText = Encoding.UTF8.GetString(receiveBuffer, 0, headerEndIndex);
@@ -138,7 +138,6 @@ public class AirPlayReceiverServer : IAsyncDisposable
                     string cseq = "1";
                     int contentLength = 0;
                     string userAgent = "";
-                    string contentType = "";
 
                     foreach (var line in lines)
                     {
@@ -148,25 +147,17 @@ public class AirPlayReceiverServer : IAsyncDisposable
                             int.TryParse(line.Substring(15).Trim(), out contentLength);
                         else if (line.StartsWith("User-Agent:", StringComparison.OrdinalIgnoreCase))
                             userAgent = line.Substring(11).Trim();
-                        else if (line.StartsWith("Content-Type:", StringComparison.OrdinalIgnoreCase))
-                            contentType = line.Substring(13).Trim();
                     }
 
                     int totalRequestLength = headerLength + contentLength;
-                    if (bufferCount < totalRequestLength)
-                    {
-                        // Chưa nhận đủ body, tiếp tục đọc socket
-                        break;
-                    }
+                    if (bufferCount < totalRequestLength) break;
 
-                    // Trích xuất binary body
                     var bodyBytes = new byte[contentLength];
                     if (contentLength > 0)
                     {
                         Buffer.BlockCopy(receiveBuffer, headerLength, bodyBytes, 0, contentLength);
                     }
 
-                    // Dịch chuyển buffer còn lại lên đầu
                     int remainingBytes = bufferCount - totalRequestLength;
                     if (remainingBytes > 0)
                     {
@@ -176,7 +167,6 @@ public class AirPlayReceiverServer : IAsyncDisposable
 
                     AppLogger.Log($"[YÊU CẦU NHẬN] {method} {uri} (Giao thức: {protocol}, CSeq: {cseq}, Body: {contentLength} bytes, UA: {userAgent})");
 
-                    // 2. Xử lý logic từng endpoint AirPlay
                     byte[] responseBytes;
 
                     if (method.Equals("GET", StringComparison.OrdinalIgnoreCase) && uri.StartsWith("/info", StringComparison.OrdinalIgnoreCase))
@@ -209,7 +199,44 @@ public class AirPlayReceiverServer : IAsyncDisposable
                     }
                     else if (method.Equals("SETUP", StringComparison.OrdinalIgnoreCase))
                     {
-                        responseBytes = BuildRtspSetupResponse(protocol, cseq);
+                        // Parse SETUP body (Binary Plist) để lấy streamConnectionID & ekey
+                        var streamConnectionId = "0";
+                        if (bodyBytes.Length > 0)
+                        {
+                            try
+                            {
+                                var plistReader = new BinaryPlistReader();
+                                using var ms = new MemoryStream(bodyBytes);
+                                var dict = plistReader.ReadObject(ms);
+
+                                if (dict.Contains("ekey") && dict["ekey"] is byte[] ekey)
+                                {
+                                    var aesKey = _security.DecryptAesKey(ekey);
+
+                                    if (dict.Contains("streams") && dict["streams"] is object[] streamsArr && streamsArr.Length > 0)
+                                    {
+                                        if (streamsArr[0] is System.Collections.IDictionary st && st.Contains("streamConnectionID"))
+                                        {
+                                            streamConnectionId = Convert.ToUInt64(st["streamConnectionID"]).ToString();
+                                        }
+                                    }
+
+                                    if (_security.SharedSecret != null)
+                                    {
+                                        _mirroringServer.InitCipher(aesKey, _security.SharedSecret, streamConnectionId);
+                                    }
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                AppLogger.Log($"[AirPlay SETUP] Thông tin bplist: {ex.Message}");
+                            }
+                        }
+
+                        // Trả về Binary Plist chỉ định dataPort cổng 7011 cho luồng video mirroring
+                        responseBytes = BuildRtspSetupPlistResponse(protocol, cseq, _mirroringServer.Port);
+                        AppLogger.Log($"[PHẢN HỒI] 200 OK cho SETUP (Cung cấp Mirroring DataPort {_mirroringServer.Port})");
+
                         AppLogger.Log($"[AIRPLAY] === THIẾT BỊ BẮT ĐẦU PHIÊN PHẢN CHIẾU: {deviceName} ===");
                         ClientConnected?.Invoke(this, new AirPlayClientConnectedEventArgs
                         {
@@ -222,6 +249,20 @@ public class AirPlayReceiverServer : IAsyncDisposable
                     {
                         responseBytes = BuildRtspRecordResponse(protocol, cseq);
                         AppLogger.Log($"[PHẢN HỒI] RTSP 200 OK cho RECORD (CSeq: {cseq})");
+                    }
+                    else if (method.Equals("GET_PARAMETER", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var reqStr = bodyBytes.Length > 0 ? Encoding.ASCII.GetString(bodyBytes) : "";
+                        if (reqStr.Contains("volume", StringComparison.OrdinalIgnoreCase))
+                        {
+                            var volBody = Encoding.ASCII.GetBytes("volume: 1.000000\r\n");
+                            responseBytes = BuildCustomResponse(protocol, cseq, "text/parameters", volBody);
+                        }
+                        else
+                        {
+                            responseBytes = Encoding.UTF8.GetBytes($"{protocol} 200 OK\r\nCSeq: {cseq}\r\nServer: AirTunes/220.68\r\nContent-Length: 0\r\n\r\n");
+                        }
+                        AppLogger.Log($"[PHẢN HỒI] RTSP 200 OK cho GET_PARAMETER (CSeq: {cseq})");
                     }
                     else if (method.Equals("TEARDOWN", StringComparison.OrdinalIgnoreCase))
                     {
@@ -340,9 +381,14 @@ public class AirPlayReceiverServer : IAsyncDisposable
 
     private static byte[] BuildOctetStreamResponse(string protocol, string cseq, byte[] payload)
     {
+        return BuildCustomResponse(protocol, cseq, "application/octet-stream", payload);
+    }
+
+    private static byte[] BuildCustomResponse(string protocol, string cseq, string contentType, byte[] payload)
+    {
         var headers = $"{protocol} 200 OK\r\n" +
                       $"CSeq: {cseq}\r\n" +
-                      $"Content-Type: application/octet-stream\r\n" +
+                      $"Content-Type: {contentType}\r\n" +
                       $"Content-Length: {payload.Length}\r\n" +
                       $"Server: AirTunes/220.68\r\n" +
                       $"\r\n";
@@ -357,23 +403,50 @@ public class AirPlayReceiverServer : IAsyncDisposable
         return result;
     }
 
+    private static byte[] BuildRtspSetupPlistResponse(string protocol, string cseq, int dataPort)
+    {
+        var streamsDict = new Dictionary<string, object>
+        {
+            { "eventPort", 7000 },
+            { "timingPort", 7010 },
+            {
+                "streams",
+                new List<Dictionary<string, int>>
+                {
+                    new()
+                    {
+                        { "type", 110 },
+                        { "dataPort", dataPort }
+                    }
+                }
+            }
+        };
+
+        using var ms = new MemoryStream();
+        var writer = new BinaryPlistWriter();
+        writer.WriteObject(ms, streamsDict, false);
+        var plistBytes = ms.ToArray();
+
+        var headers = $"{protocol} 200 OK\r\n" +
+                      $"CSeq: {cseq}\r\n" +
+                      $"Server: AirTunes/220.68\r\n" +
+                      $"Content-Type: application/x-apple-binary-plist\r\n" +
+                      $"Content-Length: {plistBytes.Length}\r\n" +
+                      $"\r\n";
+
+        var headerBytes = Encoding.UTF8.GetBytes(headers);
+        var result = new byte[headerBytes.Length + plistBytes.Length];
+        Buffer.BlockCopy(headerBytes, 0, result, 0, headerBytes.Length);
+        Buffer.BlockCopy(plistBytes, 0, result, headerBytes.Length, plistBytes.Length);
+        return result;
+    }
+
     private static byte[] BuildRtspOptionsResponse(string protocol, string cseq)
     {
         var msg = $"{protocol} 200 OK\r\n" +
                   $"CSeq: {cseq}\r\n" +
                   $"Server: AirTunes/220.68\r\n" +
                   $"Public: SETUP, RECORD, PAUSE, FLUSH, TEARDOWN, OPTIONS, GET_PARAMETER, SET_PARAMETER, POST, GET\r\n" +
-                  $"\r\n";
-        return Encoding.UTF8.GetBytes(msg);
-    }
-
-    private static byte[] BuildRtspSetupResponse(string protocol, string cseq)
-    {
-        var msg = $"{protocol} 200 OK\r\n" +
-                  $"CSeq: {cseq}\r\n" +
-                  $"Server: AirTunes/220.68\r\n" +
-                  $"Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n" +
-                  $"Session: 1\r\n" +
                   $"\r\n";
         return Encoding.UTF8.GetBytes(msg);
     }

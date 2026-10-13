@@ -29,6 +29,9 @@ public class AirPlaySecurity
     private AsymmetricCipherKeyPair? _xKeyPair;
     private byte[]? _sharedSecret;
 
+    public byte[]? KeyMsg { get; private set; }
+    public byte[]? SharedSecret => _sharedSecret;
+
     // Các phản hồi FairPlay mẫu (142 bytes) chuẩn từ PlayFair / RPiPlay
     private static readonly byte[][] FpReplies = new byte[][]
     {
@@ -159,6 +162,9 @@ public class AirPlaySecurity
         }
         else if (requestBody.Length >= 164)
         {
+            KeyMsg = new byte[164];
+            Buffer.BlockCopy(requestBody, 0, KeyMsg, 0, 164);
+
             var reply = new byte[32];
             Buffer.BlockCopy(FpHeader12, 0, reply, 0, 12);
             Buffer.BlockCopy(requestBody, 144, reply, 12, 20);
@@ -168,6 +174,21 @@ public class AirPlaySecurity
 
         AppLogger.Log($"[FairPlay-CẢNH BÁO] Nhận /fp-setup với kích thước lạ: {requestBody.Length} bytes");
         return Array.Empty<byte>();
+    }
+
+    /// <summary>
+    /// Giải mã FairPlay AES Key (16 bytes) từ cipherText (72 bytes từ SETUP ekey)
+    /// </summary>
+    public byte[] DecryptAesKey(byte[] cipherText)
+    {
+        var keyOut = new byte[16];
+        if (KeyMsg != null && cipherText != null && cipherText.Length >= 72)
+        {
+            var omg = new JRemote.iOS.PlayFair.OmgHax();
+            omg.DecryptAesKey(KeyMsg, cipherText, keyOut);
+            AppLogger.Log($"[FairPlay] Đã giải mã thành công Video AES Key: {Convert.ToHexString(keyOut)}");
+        }
+        return keyOut;
     }
 
     private static byte[] DeriveKey(string salt, byte[] secret, int length)

@@ -283,7 +283,7 @@ public partial class MainViewModel : ObservableObject, IAsyncDisposable
             }
             else if (deviceVm.Device is IOSDevice iosDev)
             {
-                _activeSession = new IOSMirroringSession(iosDev);
+                _activeSession = new IOSMirroringSession(iosDev, _airPlayReceiver);
             }
             else
             {

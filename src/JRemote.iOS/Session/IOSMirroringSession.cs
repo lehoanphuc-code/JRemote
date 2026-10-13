@@ -1,5 +1,6 @@
 using JRemote.Core.Interfaces;
 using JRemote.Core.Models;
+using JRemote.iOS.AirPlay;
 using JRemote.iOS.Bluetooth;
 using JRemote.iOS.Devices;
 
@@ -9,6 +10,7 @@ public class IOSMirroringSession : IMirroringSession
 {
     private readonly IOSDevice _device;
     private readonly BluetoothHidController _hidController;
+    private readonly AirPlayReceiverServer? _airPlayServer;
     private CancellationTokenSource? _sessionCts;
     private bool _isRunning;
 
@@ -19,10 +21,22 @@ public class IOSMirroringSession : IMirroringSession
     public event EventHandler<VideoFrame>? FrameReceived;
     public event EventHandler<string>? ErrorOccurred;
 
-    public IOSMirroringSession(IOSDevice device)
+    public IOSMirroringSession(IOSDevice device, AirPlayReceiverServer? airPlayServer = null)
     {
         _device = device;
+        _airPlayServer = airPlayServer;
         _hidController = new BluetoothHidController();
+
+        if (_airPlayServer != null)
+        {
+            _airPlayServer.VideoFrameReceived += OnServerVideoFrameReceived;
+        }
+    }
+
+    private void OnServerVideoFrameReceived(object? sender, byte[] nalUnit)
+    {
+        if (!_isRunning) return;
+        FrameReceived?.Invoke(this, new VideoFrame(0, 0, 0, nalUnit, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
     }
 
     public async Task StartAsync(MirroringConfig? config = null, CancellationToken cancellationToken = default)
@@ -34,11 +48,8 @@ public class IOSMirroringSession : IMirroringSession
         _isRunning = true;
         _device.UpdateState(DeviceState.Mirroring);
 
-        // Try to start Bluetooth HID emulation for mouse/keyboard control
+        // Bắt đầu Bluetooth HID emulation cho chuột và phím
         _ = _hidController.StartEmulationAsync();
-
-        // Background frame processing loop
-        _ = Task.Run(() => StreamLoopAsync(_sessionCts.Token), _sessionCts.Token);
         await Task.CompletedTask;
     }
 
@@ -49,28 +60,12 @@ public class IOSMirroringSession : IMirroringSession
         _isRunning = false;
         _sessionCts?.Cancel();
         _hidController.Stop();
+        if (_airPlayServer != null)
+        {
+            _airPlayServer.VideoFrameReceived -= OnServerVideoFrameReceived;
+        }
         _device.UpdateState(DeviceState.Connected);
         return Task.CompletedTask;
-    }
-
-    private async Task StreamLoopAsync(CancellationToken cancellationToken)
-    {
-        try
-        {
-            while (!cancellationToken.IsCancellationRequested && _isRunning)
-            {
-                // In production, AirPlay H.264 NAL units are demuxed and decoded here
-                await Task.Delay(16, cancellationToken);
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            // Normal exit
-        }
-        catch (Exception ex)
-        {
-            ErrorOccurred?.Invoke(this, $"iOS stream error: {ex.Message}");
-        }
     }
 
     public async ValueTask DisposeAsync()
