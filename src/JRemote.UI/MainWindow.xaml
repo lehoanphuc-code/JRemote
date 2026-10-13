@@ -1,0 +1,233 @@
+<ui:FluentWindow x:Class="JRemote.UI.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+        xmlns:vm="clr-namespace:JRemote.UI.ViewModels"
+        mc:Ignorable="d"
+        Title="JRemote - Mirror &amp; Control"
+        Height="780" Width="1100"
+        MinHeight="600" MinWidth="900"
+        WindowStartupLocation="CenterScreen"
+        Topmost="{Binding IsAlwaysOnTop}">
+
+    <ui:FluentWindow.DataContext>
+        <vm:MainViewModel />
+    </ui:FluentWindow.DataContext>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- TitleBar -->
+        <ui:TitleBar Grid.Row="0" Title="JRemote - Phản Chiếu &amp; Điều Khiển Điện Thoại (iOS &amp; Android)" />
+
+        <!-- Main Content -->
+        <Grid Grid.Row="1" Margin="16,8,16,16">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="380" />
+                <ColumnDefinition Width="12" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <!-- Left Sidebar: Device Management & Controls -->
+            <Grid Grid.Column="0">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <!-- AirPlay Server Status Card -->
+                <ui:Card Grid.Row="0" Margin="0,0,0,12" Padding="14">
+                    <StackPanel>
+                        <Grid Margin="0,0,0,6">
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <ui:SymbolIcon Symbol="Tv24" FontSize="18" Margin="0,0,8,0" Foreground="#38ef7d" />
+                                <TextBlock Text="AirPlay Receiver (iPhone / iPad)" FontWeight="SemiBold" FontSize="14" />
+                            </StackPanel>
+                            <ui:Button HorizontalAlignment="Right" Padding="8,4"
+                                       Appearance="Secondary"
+                                       Command="{Binding ToggleAirPlayCommand}">
+                                <TextBlock Text="Bật / Tắt" />
+                            </ui:Button>
+                        </Grid>
+                        <TextBlock Text="{Binding AirPlayStatus}" FontSize="12" Foreground="#888888" TextWrapping="Wrap" Margin="0,0,0,6" />
+                        <Border Background="#1a2530" CornerRadius="4" Padding="8,6">
+                            <TextBlock Text="💡 Trên iPhone: Mở Control Center ➔ Chọn 'Phản chiếu màn hình' ➔ Chọn 'JRemote-PC'"
+                                       FontSize="11" Foreground="#61afef" TextWrapping="Wrap" />
+                        </Border>
+                    </StackPanel>
+                </ui:Card>
+
+                <!-- Android Connection Card -->
+                <ui:Card Grid.Row="1" Margin="0,0,0,12" Padding="14">
+                    <StackPanel>
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,0,8">
+                            <ui:SymbolIcon Symbol="Phone24" FontSize="18" Margin="0,0,8,0" Foreground="#00c6ff" />
+                            <TextBlock Text="Kết Nối Android (Wi-Fi / USB)" FontWeight="SemiBold" FontSize="14" />
+                        </StackPanel>
+                        <TextBlock Text="{Binding AdbStatus}" FontSize="12" Foreground="#888888" Margin="0,0,0,8" />
+                        
+                        <Grid Margin="0,0,0,6">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <ui:TextBox Grid.Column="0" 
+                                        PlaceholderText="Nhập IP (VD: 192.168.1.50:5555)"
+                                        Text="{Binding WifiIpInput, UpdateSourceTrigger=PropertyChanged}"
+                                        Margin="0,0,8,0" />
+                            <ui:Button Grid.Column="1" 
+                                       Appearance="Primary"
+                                       Content="Kết nối Wi-Fi" 
+                                       Command="{Binding ConnectWifiCommand}" />
+                        </Grid>
+                        <TextBlock Text="Cắm cáp USB (đã bật USB Debugging) thiết bị sẽ tự động xuất hiện bên dưới."
+                                   FontSize="11" Foreground="#666666" TextWrapping="Wrap" />
+                    </StackPanel>
+                </ui:Card>
+
+                <!-- Devices List Card -->
+                <ui:Card Grid.Row="2" Padding="14">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+
+                        <Grid Grid.Row="0" Margin="0,0,0,10">
+                            <TextBlock Text="Danh Sách Thiết Bị" FontWeight="SemiBold" FontSize="14" VerticalAlignment="Center" />
+                            <ui:Button HorizontalAlignment="Right" 
+                                       Appearance="Secondary"
+                                       Icon="{ui:SymbolIcon ArrowClockwise24}"
+                                       Content="Làm mới"
+                                       Command="{Binding RefreshDevicesCommand}" />
+                        </Grid>
+
+                        <ListBox Grid.Row="1" 
+                                 ItemsSource="{Binding Devices}"
+                                 SelectedItem="{Binding SelectedDevice}"
+                                 BorderThickness="0"
+                                 Background="Transparent">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Background="#202226" CornerRadius="8" Padding="12" Margin="0,0,0,8">
+                                        <Grid>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
+                                            </Grid.RowDefinitions>
+
+                                            <!-- Header -->
+                                            <Grid Grid.Row="0" Margin="0,0,0,8">
+                                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                                    <TextBlock Text="{Binding Name}" FontWeight="Bold" FontSize="13" />
+                                                </StackPanel>
+
+                                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                                    <Border Background="#2a3545" CornerRadius="4" Padding="6,2" Margin="0,0,4,0">
+                                                        <TextBlock Text="{Binding TypeBadge}" FontSize="10" Foreground="#00c6ff" FontWeight="SemiBold" />
+                                                    </Border>
+                                                    <Border Background="#2a4535" CornerRadius="4" Padding="6,2">
+                                                        <TextBlock Text="{Binding ConnectionBadge}" FontSize="10" Foreground="#38ef7d" FontWeight="SemiBold" />
+                                                    </Border>
+                                                </StackPanel>
+                                            </Grid>
+
+                                            <!-- Actions -->
+                                            <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right">
+                                                <ui:Button Appearance="Secondary" 
+                                                           FontSize="11" Padding="8,4" Margin="0,0,6,0"
+                                                           Content="Mở Wi-Fi"
+                                                           Visibility="{Binding IsAndroid, Converter={x:Null}}"
+                                                           Command="{Binding DataContext.EnableDeviceWifiAdbCommand, RelativeSource={RelativeSource AncestorType=ListBox}}"
+                                                           CommandParameter="{Binding}" />
+
+                                                <ui:Button Appearance="Primary" 
+                                                           FontSize="11" Padding="10,4"
+                                                           Content="Phản Chiếu"
+                                                           Command="{Binding DataContext.StartMirroringCommand, RelativeSource={RelativeSource AncestorType=ListBox}}"
+                                                           CommandParameter="{Binding}" />
+                                            </StackPanel>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                    </Grid>
+                </ui:Card>
+            </Grid>
+
+            <!-- Splitter Separator -->
+            <GridSplitter Grid.Column="1" HorizontalAlignment="Stretch" Background="Transparent" />
+
+            <!-- Right Area: Mirroring Viewport & Floating Toolbar -->
+            <Grid Grid.Column="2">
+                <!-- Empty State (When no active mirror) -->
+                <Border Background="#181a1f" CornerRadius="12" BorderBrush="#252830" BorderThickness="1"
+                        Visibility="{Binding IsMirroringActive, Converter={x:Null}}">
+                    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                        <ui:SymbolIcon Symbol="ScreenSearch24" FontSize="64" Foreground="#444b58" HorizontalAlignment="Center" Margin="0,0,0,16" />
+                        <TextBlock Text="Chưa Bắt Đầu Phản Chiếu" FontSize="18" FontWeight="SemiBold" Foreground="#888888" HorizontalAlignment="Center" Margin="0,0,0,8" />
+                        <TextBlock Text="Chọn một thiết bị từ danh sách bên trái hoặc kết nối AirPlay từ iPhone để bắt đầu xem và điều khiển."
+                                   FontSize="13" Foreground="#666666" HorizontalAlignment="Center" TextAlignment="Center" MaxWidth="400" TextWrapping="Wrap" />
+                    </StackPanel>
+                </Border>
+
+                <!-- Active Mirroring Viewport -->
+                <Grid Visibility="{Binding IsMirroringActive, Converter={x:Null}}">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <!-- Floating Control Toolbar -->
+                    <Border Grid.Row="0" Background="#20222a" CornerRadius="8" Padding="10,6" Margin="0,0,0,8" BorderBrush="#30343f" BorderThickness="1">
+                        <Grid>
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <TextBlock Text="Đang phản chiếu: " Foreground="#888888" FontSize="12" />
+                                <TextBlock Text="{Binding ActiveMirroringDevice.Name}" FontWeight="Bold" FontSize="12" Foreground="#ffffff" />
+                            </StackPanel>
+
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                <ui:Button Appearance="Secondary" Icon="{ui:SymbolIcon ArrowLeft24}" ToolTip="Quay lại (Back)" Margin="0,0,4,0" Command="{Binding SendBackCommand}" />
+                                <ui:Button Appearance="Secondary" Icon="{ui:SymbolIcon Circle24}" ToolTip="Về màn hình chính (Home)" Margin="0,0,4,0" Command="{Binding SendHomeCommand}" />
+                                <ui:Button Appearance="Secondary" Icon="{ui:SymbolIcon Square24}" ToolTip="Đa nhiệm (Recent Apps)" Margin="0,0,4,0" Command="{Binding SendRecentAppsCommand}" />
+                                <ui:Button Appearance="Secondary" Icon="{ui:SymbolIcon Power24}" ToolTip="Bật/Tắt màn hình" Margin="0,0,8,0" Command="{Binding SendPowerCommand}" />
+
+                                <ui:Button Appearance="Secondary" Icon="{ui:SymbolIcon Camera24}" ToolTip="Chụp ảnh màn hình" Margin="0,0,4,0" Command="{Binding TakeScreenshotCommand}" />
+                                <ui:Button Appearance="Secondary" Icon="{ui:SymbolIcon Pin24}" ToolTip="Ghim luôn ở trên cùng" Margin="0,0,8,0" Command="{Binding ToggleAlwaysOnTopCommand}" />
+                                
+                                <ui:Button Appearance="Danger" Icon="{ui:SymbolIcon Dismiss24}" ToolTip="Dừng phản chiếu" Command="{Binding StopMirroringCommand}" />
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+
+                    <!-- Viewport Canvas with direct mouse interaction -->
+                    <Border Grid.Row="1" Background="#000000" CornerRadius="8" ClipToBounds="True">
+                        <Image x:Name="ViewportImage"
+                               Source="{Binding ScreenBitmap}"
+                               Stretch="Uniform"
+                               MouseDown="OnViewportMouseDown"
+                               MouseMove="OnViewportMouseMove"
+                               MouseUp="OnViewportMouseUp"
+                               MouseRightButtonUp="OnViewportMouseRightButtonUp"
+                               MouseWheel="OnViewportMouseWheel" />
+                    </Border>
+                </Grid>
+            </Grid>
+        </Grid>
+
+        <!-- Status Bar Footer -->
+        <StatusBar Grid.Row="2" Background="#14161a" BorderBrush="#252830" BorderThickness="0,1,0,0">
+            <StatusBarItem>
+                <TextBlock Text="{Binding StatusMessage}" FontSize="12" Foreground="#888888" />
+            </StatusBarItem>
+        </StatusBar>
+    </Grid>
+</ui:FluentWindow>

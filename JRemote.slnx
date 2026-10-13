@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/JRemote.Android/JRemote.Android.csproj" />
+    <Project Path="src/JRemote.Core/JRemote.Core.csproj" />
+    <Project Path="src/JRemote.iOS/JRemote.iOS.csproj" />
+    <Project Path="src/JRemote.Rendering/JRemote.Rendering.csproj" />
+    <Project Path="src/JRemote.UI/JRemote.UI.csproj" />
+  </Folder>
+</Solution>
