@@ -239,6 +239,8 @@ public class AirPlayMirroringServer : IAsyncDisposable
                 Array.Copy(h264.PictureParameterSet, 0, _spsPps, ppsOffset + 4, h264.LengthOfPps);
 
                 AppLogger.Log($"[AirPlay Video] Đã nhận SPS ({h264.LengthOfSps}B) và PPS ({h264.LengthOfPps}B) từ iPhone.");
+                // Chuyển tiếp ngay lập tức tham số cấu hình SPS/PPS tới Video Decoder
+                VideoFrameReceived?.Invoke(this, _spsPps);
             }
         }
         catch (Exception ex)
@@ -249,11 +251,18 @@ public class AirPlayMirroringServer : IAsyncDisposable
 
     private void ProcessVideoPayload(byte[] payload)
     {
+        bool containsIdr = false;
         int naluSize = 0;
         while (naluSize + 4 <= payload.Length)
         {
             int ncLen = (payload[naluSize] << 24) | (payload[naluSize + 1] << 16) | (payload[naluSize + 2] << 8) | payload[naluSize + 3];
             if (ncLen <= 0 || naluSize + 4 + ncLen > payload.Length) break;
+
+            int nalType = payload[naluSize + 4] & 0x1F;
+            if (nalType == 5)
+            {
+                containsIdr = true;
+            }
 
             payload[naluSize] = 0;
             payload[naluSize + 1] = 0;
@@ -263,8 +272,7 @@ public class AirPlayMirroringServer : IAsyncDisposable
         }
 
         byte[] finalFrame;
-        int frameType = payload.Length > 4 ? (payload[4] & 0x1F) : 0;
-        if (frameType == 5 && _spsPps != null && _spsPps.Length > 0)
+        if (containsIdr && _spsPps != null && _spsPps.Length > 0)
         {
             finalFrame = new byte[_spsPps.Length + payload.Length];
             Buffer.BlockCopy(_spsPps, 0, finalFrame, 0, _spsPps.Length);

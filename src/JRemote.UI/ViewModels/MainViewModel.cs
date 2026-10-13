@@ -10,6 +10,7 @@ using JRemote.iOS.AirPlay;
 using JRemote.iOS.Bonjour;
 using JRemote.iOS.Devices;
 using JRemote.iOS.Session;
+using JRemote.Rendering.Decoders;
 using JRemote.Rendering.Renderers;
 using System.Collections.ObjectModel;
 using System.IO;
@@ -283,7 +284,8 @@ public partial class MainViewModel : ObservableObject, IAsyncDisposable
             }
             else if (deviceVm.Device is IOSDevice iosDev)
             {
-                _activeSession = new IOSMirroringSession(iosDev, _airPlayReceiver);
+                var decoder = new OpenH264Decoder();
+                _activeSession = new IOSMirroringSession(iosDev, _airPlayReceiver, decoder);
             }
             else
             {
