@@ -327,8 +327,6 @@
                                    Source="{Binding ScreenBitmap}"
                                    Stretch="Uniform"
                                    RenderOptions.BitmapScalingMode="HighQuality"
-                                   RenderOptions.EdgeMode="Aliased"
-                                   RenderOptions.ClearTypeHint="Enabled"
                                    SnapsToDevicePixels="True"
                                    UseLayoutRounding="True"
                                    MouseDown="OnViewportMouseDown"
