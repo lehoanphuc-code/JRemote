@@ -77,17 +77,6 @@ public class OpenH264Decoder : IVideoDecoder
                     out YUVImagePointer yuv);
 
                 _feedCount++;
-                if (_feedCount <= 30)
-                {
-                    try
-                    {
-                        var dumpPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "stream_dump.h264");
-                        using var fs = new FileStream(dumpPath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite);
-                        fs.Write(nalData);
-                    }
-                    catch { }
-                }
-
                 if (_feedCount <= 10 || _feedCount % 120 == 0)
                 {
                     string hexHeader = nalData.Length > 0 
@@ -102,11 +91,13 @@ public class OpenH264Decoder : IVideoDecoder
                     OutputHeight = yuv.Height;
 
                     // Khởi tạo hoặc cập nhật bộ đệm RGB nếu kích thước thay đổi
+                    // LƯU Ý: H264Sharp Native Store4Interleave với ImageFormat.Rgba ghi bộ nhớ thứ tự B, G, R, 0xFF,
+                    // hoàn toàn khớp 100% với PixelFormats.Bgra32 của WPF!
                     if (_rgbImage == null || _rgbImage.Width != yuv.Width || _rgbImage.Height != yuv.Height)
                     {
                         _rgbImage?.Dispose();
-                        _rgbImage = new RgbImage(ImageFormat.Bgra, yuv.Width, yuv.Height);
-                        AppLogger.Log($"[OpenH264Decoder] Khởi tạo bộ đệm hiển thị: {yuv.Width}x{yuv.Height} (Bgra32, Stride: {_rgbImage.Stride})");
+                        _rgbImage = new RgbImage(ImageFormat.Rgba, yuv.Width, yuv.Height);
+                        AppLogger.Log($"[OpenH264Decoder] Khởi tạo bộ đệm hiển thị: {yuv.Width}x{yuv.Height} (Chuẩn màu Bgra32, Stride: {_rgbImage.Stride})");
                     }
 
                     // Chuyển đổi màu sắc YUV420P sang BGRA32 bằng SIMD tăng tốc phần cứng

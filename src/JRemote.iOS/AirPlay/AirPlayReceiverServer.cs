@@ -395,9 +395,11 @@ public class AirPlayReceiverServer : IAsyncDisposable
                         <key>rotation</key>
                         <false/>
                         <key>refreshRate</key>
-                        <real>0.016666666666666666</real>
+                        <integer>60</integer>
+                        <key>maxFPS</key>
+                        <integer>60</integer>
                         <key>overscanned</key>
-                        <true/>
+                        <false/>
                         <key>features</key>
                         <integer>14</integer>
                     </dict>
