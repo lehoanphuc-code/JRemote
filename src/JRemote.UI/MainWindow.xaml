@@ -194,7 +194,7 @@
                         </StackPanel>
 
                         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
-                            <TextBlock Text="{Binding ActiveMirroringDevice.Name, StringFormat='Đang chiếu: {0}'}" 
+                            <TextBlock Text="{Binding ActiveSlots.Count, StringFormat='Đang chiếu: {0}/3 thiết bị'}" 
                                        Foreground="#38ef7d" FontWeight="SemiBold" FontSize="12" Margin="0,0,10,0" VerticalAlignment="Center"
                                        Visibility="{Binding IsMirroringActive, Converter={StaticResource BoolToVis}}" />
                             <ui:Button Appearance="Secondary" FontSize="11" Padding="8,3"
@@ -297,44 +297,123 @@
                             <RowDefinition Height="*" />
                         </Grid.RowDefinitions>
 
-                        <!-- Floating Control Toolbar -->
+                        <!-- Global Control Toolbar -->
                         <Border Grid.Row="0" Background="#20222a" CornerRadius="8" Padding="10,6" Margin="0,0,0,8" BorderBrush="#30343f" BorderThickness="1">
                             <Grid>
                                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                                     <TextBlock Text="Đang phản chiếu: " Foreground="#888888" FontSize="12" />
-                                    <TextBlock Text="{Binding ActiveMirroringDevice.Name}" FontWeight="Bold" FontSize="12" Foreground="#ffffff" />
+                                    <TextBlock Text="{Binding ActiveSlots.Count, StringFormat='{}{0}/3 Thiết bị'}" FontWeight="Bold" FontSize="12" Foreground="#38ef7d" />
                                 </StackPanel>
 
                                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                                    <ui:Button Appearance="Secondary" Icon="{ui:SymbolIcon ArrowLeft24}" ToolTip="Quay lại (Back)" Margin="0,0,4,0" Command="{Binding SendBackCommand}" />
-                                    <ui:Button Appearance="Secondary" Icon="{ui:SymbolIcon Circle24}" ToolTip="Về màn hình chính (Home)" Margin="0,0,4,0" Command="{Binding SendHomeCommand}" />
-                                    <ui:Button Appearance="Secondary" Icon="{ui:SymbolIcon Square24}" ToolTip="Đa nhiệm (Recent Apps)" Margin="0,0,4,0" Command="{Binding SendRecentAppsCommand}" />
-                                    <ui:Button Appearance="Secondary" Icon="{ui:SymbolIcon Power24}" ToolTip="Bật/Tắt màn hình" Margin="0,0,8,0" Command="{Binding SendPowerCommand}" />
-
-                                    <ui:Button Appearance="Secondary" Icon="{ui:SymbolIcon Camera24}" ToolTip="Chụp ảnh màn hình" Margin="0,0,4,0" Command="{Binding TakeScreenshotCommand}" />
                                     <ui:Button Appearance="Secondary" Icon="{ui:SymbolIcon Pin24}" ToolTip="Ghim luôn ở trên cùng" Margin="0,0,8,0" Command="{Binding ToggleAlwaysOnTopCommand}" />
-                                    
                                     <ui:Button Appearance="Secondary" Icon="{ui:SymbolIcon TextBulletList24}" ToolTip="Xem nhật ký kết nối" Margin="0,0,8,0" Command="{Binding SelectLogsViewCommand}" />
-
-                                    <ui:Button Appearance="Danger" Icon="{ui:SymbolIcon Dismiss24}" ToolTip="Dừng phản chiếu" Command="{Binding StopMirroringCommand}" />
+                                    <ui:Button Appearance="Danger" Icon="{ui:SymbolIcon Dismiss24}" Content="Đóng tất cả" ToolTip="Dừng tất cả phản chiếu" Command="{Binding StopMirroringCommand}" />
                                 </StackPanel>
                             </Grid>
                         </Border>
 
-                        <!-- Viewport Canvas with direct mouse interaction -->
-                        <Border Grid.Row="1" Background="#000000" CornerRadius="8" ClipToBounds="True">
-                            <Image x:Name="ViewportImage"
-                                   Source="{Binding ScreenBitmap}"
-                                   Stretch="Uniform"
-                                   RenderOptions.BitmapScalingMode="HighQuality"
-                                   SnapsToDevicePixels="True"
-                                   UseLayoutRounding="True"
-                                   MouseDown="OnViewportMouseDown"
-                                   MouseMove="OnViewportMouseMove"
-                                   MouseUp="OnViewportMouseUp"
-                                   MouseRightButtonUp="OnViewportMouseRightButtonUp"
-                                   MouseWheel="OnViewportMouseWheel" />
-                        </Border>
+                        <!-- Multi-Slot Grid Viewport: 1-3 Cột song song -->
+                        <Grid Grid.Row="1">
+                            <!-- Hiển thị khi chưa có slot nào hoạt động -->
+                            <Border Background="#101216" CornerRadius="8" BorderBrush="#20232a" BorderThickness="1">
+                                <Border.Style>
+                                    <Style TargetType="Border">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsMirroringActive}" Value="False">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Border.Style>
+                                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                                    <ui:SymbolIcon Symbol="Tv24" FontSize="44" Foreground="#444855" HorizontalAlignment="Center" Margin="0,0,0,12" />
+                                    <TextBlock Text="Chưa có thiết bị nào đang phản chiếu" FontSize="15" FontWeight="SemiBold" Foreground="#888888" HorizontalAlignment="Center" />
+                                    <TextBlock Text="Bật AirPlay trên iPhone hoặc cắm cáp Android để phản chiếu (Tối đa 3 thiết bị cùng lúc)" FontSize="12" Foreground="#666666" HorizontalAlignment="Center" Margin="0,4,0,0" />
+                                </StackPanel>
+                            </Border>
+
+                            <!-- ItemsControl hiển thị 1 đến 3 Slots song song cạnh nhau -->
+                            <ItemsControl ItemsSource="{Binding ActiveSlots}">
+                                <ItemsControl.Style>
+                                    <Style TargetType="ItemsControl">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsMirroringActive}" Value="True">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </ItemsControl.Style>
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <UniformGrid Rows="1" />
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Margin="4,0" Background="#15171d" CornerRadius="8" BorderBrush="#252830" BorderThickness="1" Padding="6">
+                                            <Grid>
+                                                <Grid.RowDefinitions>
+                                                    <RowDefinition Height="Auto" />
+                                                    <RowDefinition Height="*" />
+                                                    <RowDefinition Height="Auto" />
+                                                </Grid.RowDefinitions>
+
+                                                <!-- Slot Header: Tên thiết bị, Slot index, Độ phân giải, FPS, Nút đóng ô -->
+                                                <Border Grid.Row="0" Background="#1c1f26" CornerRadius="6" Padding="8,5" Margin="0,0,0,6">
+                                                    <Grid>
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="Auto" />
+                                                        </Grid.ColumnDefinitions>
+
+                                                        <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                                                            <Border Background="#282c37" CornerRadius="4" Padding="5,2" Margin="0,0,6,0">
+                                                                <TextBlock Text="{Binding SlotNumber, StringFormat='Slot {0}'}" FontSize="10" FontWeight="Bold" Foreground="#61afef" />
+                                                            </Border>
+                                                            <TextBlock Text="{Binding DeviceItem.Name}" FontWeight="SemiBold" FontSize="12" Foreground="#ffffff" TextTrimming="CharacterEllipsis" MaxWidth="150" ToolTip="{Binding DeviceItem.Name}" />
+                                                            <TextBlock Text="{Binding ResolutionText}" FontSize="10" Foreground="#888888" Margin="8,0,0,0" VerticalAlignment="Center" />
+                                                            <TextBlock Text="{Binding FpsText}" FontSize="10" FontWeight="SemiBold" Foreground="#38ef7d" Margin="6,0,0,0" VerticalAlignment="Center" />
+                                                        </StackPanel>
+
+                                                        <ui:Button Grid.Column="1" Appearance="Secondary"
+                                                                   Icon="{ui:SymbolIcon Dismiss24}" FontSize="11" Padding="4,2" ToolTip="Đóng slot này"
+                                                                   Command="{Binding RequestCloseCommand}" />
+                                                    </Grid>
+                                                </Border>
+
+                                                <!-- Mirror Screen Canvas -->
+                                                <Border Grid.Row="1" Background="#000000" CornerRadius="6" ClipToBounds="True">
+                                                    <Image Source="{Binding ScreenBitmap}"
+                                                           Tag="{Binding}"
+                                                           Stretch="Uniform"
+                                                           RenderOptions.BitmapScalingMode="HighQuality"
+                                                           SnapsToDevicePixels="True"
+                                                           UseLayoutRounding="True"
+                                                           MouseDown="OnSlotMouseDown"
+                                                           MouseMove="OnSlotMouseMove"
+                                                           MouseUp="OnSlotMouseUp"
+                                                           MouseRightButtonUp="OnSlotMouseRightButtonUp"
+                                                           MouseWheel="OnSlotMouseWheel" />
+                                                </Border>
+
+                                                <!-- Slot Bottom Controls Toolbar: Back, Home, Recent, Screenshot -->
+                                                <Border Grid.Row="2" Background="#1c1f26" CornerRadius="6" Padding="6,4" Margin="0,6,0,0">
+                                                    <UniformGrid Rows="1" HorizontalAlignment="Center">
+                                                        <ui:Button Appearance="Secondary" Icon="{ui:SymbolIcon ArrowLeft24}" ToolTip="Quay lại (Back)" Margin="2,0" Padding="8,4" Command="{Binding SendBackCommand}" />
+                                                        <ui:Button Appearance="Secondary" Icon="{ui:SymbolIcon Circle24}" ToolTip="Màn hình chính (Home)" Margin="2,0" Padding="8,4" Command="{Binding SendHomeCommand}" />
+                                                        <ui:Button Appearance="Secondary" Icon="{ui:SymbolIcon Square24}" ToolTip="Đa nhiệm (Recent Apps)" Margin="2,0" Padding="8,4" Command="{Binding SendRecentAppsCommand}" />
+                                                        <ui:Button Appearance="Secondary" Icon="{ui:SymbolIcon Camera24}" ToolTip="Chụp ảnh màn hình" Margin="2,0" Padding="8,4" Command="{Binding TakeScreenshotCommand}" />
+                                                    </UniformGrid>
+                                                </Border>
+                                            </Grid>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </Grid>
                     </Grid>
                 </Grid>
             </Grid>

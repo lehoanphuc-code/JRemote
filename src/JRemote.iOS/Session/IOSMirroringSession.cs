@@ -46,17 +46,24 @@ public class IOSMirroringSession : IMirroringSession
         }
     }
 
-    private void OnServerVideoFrameReceived(object? sender, byte[] nalUnit)
+    private void OnServerVideoFrameReceived(object? sender, AirPlayFrameEventArgs e)
     {
         if (!_isRunning) return;
 
+        // Chỉ xử lý frame thuộc về thiết bị (Client IP) của phiên này
+        var targetIp = _device.IpAddress ?? _device.Info.Id;
+        if (!string.Equals(e.ClientIp, targetIp, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
         if (_videoDecoder != null)
         {
-            _ = _videoDecoder.FeedNalUnitAsync(nalUnit, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+            _ = _videoDecoder.FeedNalUnitAsync(e.NalUnit, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
         }
         else
         {
-            FrameReceived?.Invoke(this, new VideoFrame(0, 0, 0, nalUnit, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
+            FrameReceived?.Invoke(this, new VideoFrame(0, 0, 0, e.NalUnit, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
         }
     }
 

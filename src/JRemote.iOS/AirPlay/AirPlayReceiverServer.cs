@@ -1,5 +1,6 @@
 using JRemote.Core.Logging;
 using JRemote.iOS.PlayFair;
+using System.Collections.Concurrent;
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
@@ -19,10 +20,10 @@ public class AirPlayReceiverServer : IAsyncDisposable
     private TcpListener? _listener;
     private CancellationTokenSource? _cts;
     private bool _isRunning;
-    private string? _activeStreamingIp;
+    private readonly ConcurrentDictionary<string, bool> _activeStreamingIps = new();
+    private readonly ConcurrentDictionary<string, byte[]> _cachedDecryptedAesKeys = new();
     private readonly AirPlaySecurity _security;
     private readonly AirPlayMirroringServer _mirroringServer;
-    private byte[]? _cachedDecryptedAesKey;
 
     public int Port { get; }
     public bool IsRunning => _isRunning;
@@ -31,7 +32,7 @@ public class AirPlayReceiverServer : IAsyncDisposable
 
     public event EventHandler<AirPlayClientConnectedEventArgs>? ClientConnected;
     public event EventHandler<string>? ClientDisconnected;
-    public event EventHandler<byte[]>? VideoFrameReceived;
+    public event EventHandler<AirPlayFrameEventArgs>? VideoFrameReceived;
 
     public AirPlayReceiverServer(AirPlaySecurity? security = null, int port = 7000, int videoDataPort = 7011)
     {
@@ -226,7 +227,11 @@ public class AirPlayReceiverServer : IAsyncDisposable
 
                                 if (dict.Contains("ekey") && dict["ekey"] is byte[] ekey)
                                 {
-                                    _cachedDecryptedAesKey = _security.DecryptAesKey(ekey);
+                                    var decryptedKey = _security.DecryptAesKey(ekey);
+                                    if (decryptedKey != null)
+                                    {
+                                        _cachedDecryptedAesKeys[clientIp] = decryptedKey;
+                                    }
                                 }
 
                                 if (dict.Contains("streamConnectionID"))
@@ -250,17 +255,17 @@ public class AirPlayReceiverServer : IAsyncDisposable
                                     streamConnectionId = realStreamConnectionId;
                                 }
 
-                                AppLogger.Log($"[AirPlay SETUP] Xác định StreamConnectionID: '{streamConnectionId}' (từ Plist: '{realStreamConnectionId ?? "None"}', URI: '{uri}')");
+                                AppLogger.Log($"[AirPlay SETUP {clientIp}] Xác định StreamConnectionID: '{streamConnectionId}' (từ Plist: '{realStreamConnectionId ?? "None"}', URI: '{uri}')");
 
-                                // Khởi tạo Decryptor: Sử dụng AES Key (đã giải mã và lưu cache) + ECDH SharedSecret + streamConnectionID
-                                if (_cachedDecryptedAesKey != null && _security.SharedSecret != null && !string.IsNullOrEmpty(streamConnectionId) && streamConnectionId != "0")
+                                // Khởi tạo Decryptor: Sử dụng AES Key (đã giải mã và lưu cache theo clientIp) + ECDH SharedSecret + streamConnectionID
+                                if (_cachedDecryptedAesKeys.TryGetValue(clientIp, out var cachedKey) && _security.SharedSecret != null && !string.IsNullOrEmpty(streamConnectionId) && streamConnectionId != "0")
                                 {
-                                    _mirroringServer.InitCipher(_cachedDecryptedAesKey, _security.SharedSecret, streamConnectionId);
+                                    _mirroringServer.InitCipher(clientIp, cachedKey, _security.SharedSecret, streamConnectionId);
                                 }
                             }
                             catch (Exception ex)
                             {
-                                AppLogger.Log($"[AirPlay SETUP-LỖI] Parse bplist: {ex.Message}");
+                                AppLogger.Log($"[AirPlay SETUP-LỖI {clientIp}] Parse bplist: {ex.Message}");
                             }
                         }
 
@@ -268,9 +273,9 @@ public class AirPlayReceiverServer : IAsyncDisposable
                         responseBytes = BuildRtspSetupPlistResponse(protocol, cseq, _mirroringServer.Port);
                         AppLogger.Log($"[PHẢN HỒI] 200 OK cho SETUP (Cung cấp Mirroring DataPort {_mirroringServer.Port})");
 
-                        if (_activeStreamingIp != clientIp)
+                        bool isNewStream = _activeStreamingIps.TryAdd(clientIp, true);
+                        if (isNewStream)
                         {
-                            _activeStreamingIp = clientIp;
                             AppLogger.Log($"[AIRPLAY] === THIẾT BỊ BẮT ĐẦU PHIÊN PHẢN CHIẾU: {deviceName} ===");
                             ClientConnected?.Invoke(this, new AirPlayClientConnectedEventArgs
                             {
@@ -305,12 +310,12 @@ public class AirPlayReceiverServer : IAsyncDisposable
                     }
                     else if (method.Equals("TEARDOWN", StringComparison.OrdinalIgnoreCase))
                     {
-                        _cachedDecryptedAesKey = null;
+                        _activeStreamingIps.TryRemove(clientIp, out _);
+                        _cachedDecryptedAesKeys.TryRemove(clientIp, out _);
                         responseBytes = Encoding.UTF8.GetBytes($"{protocol} 200 OK\r\nCSeq: {cseq}\r\nServer: AirTunes/220.68\r\n\r\n");
                         await stream.WriteAsync(responseBytes, cancellationToken);
                         await stream.FlushAsync(cancellationToken);
-                        AppLogger.Log($"[AIRPLAY] Thiết bị yêu cầu TEARDOWN (Dừng phiên phản chiếu).");
-                        if (_activeStreamingIp == clientIp) _activeStreamingIp = null;
+                        AppLogger.Log($"[AIRPLAY {clientIp}] Thiết bị yêu cầu TEARDOWN (Dừng phiên phản chiếu).");
                         ClientDisconnected?.Invoke(this, clientIp);
                         return;
                     }
@@ -328,7 +333,8 @@ public class AirPlayReceiverServer : IAsyncDisposable
         catch (Exception ex)
         {
             AppLogger.Log($"[AirPlay TCP-LỖI] Kết nối {remoteEp} gặp sự cố: {ex.Message}");
-            if (_activeStreamingIp == clientIp) _activeStreamingIp = null;
+            _activeStreamingIps.TryRemove(clientIp, out _);
+            _cachedDecryptedAesKeys.TryRemove(clientIp, out _);
             ClientDisconnected?.Invoke(this, clientIp);
         }
     }

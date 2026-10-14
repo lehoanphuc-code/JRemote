@@ -2,8 +2,10 @@ using JRemote.Core.Models;
 using CoreTouchAction = JRemote.Core.Models.TouchAction;
 using JRemote.UI.ViewModels;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Input;
 using Wpf.Ui.Controls;
+using Image = System.Windows.Controls.Image;
 
 namespace JRemote.UI;
 
@@ -30,79 +32,90 @@ public partial class MainWindow : FluentWindow
         await ViewModel.InitializeAsync();
     }
 
-    private void OnViewportMouseDown(object sender, MouseButtonEventArgs e)
+    private void OnSlotMouseDown(object sender, MouseButtonEventArgs e)
     {
-        if (e.LeftButton == MouseButtonState.Pressed)
+        if (sender is Image img && img.Tag is MirroringSlotViewModel slot)
         {
-            _isPointerDown = true;
-            ViewportImage.CaptureMouse();
-            var touch = CalculateTouchEvent(e.GetPosition(ViewportImage), CoreTouchAction.Down);
-            if (touch != null)
+            if (e.LeftButton == MouseButtonState.Pressed)
             {
-                _ = ViewModel.ForwardTouchAsync(touch);
+                _isPointerDown = true;
+                img.CaptureMouse();
+                var touch = CalculateTouchEvent(img, slot, e.GetPosition(img), CoreTouchAction.Down);
+                if (touch != null)
+                {
+                    _ = slot.ForwardTouchAsync(touch);
+                }
             }
         }
     }
 
-    private void OnViewportMouseMove(object sender, MouseEventArgs e)
+    private void OnSlotMouseMove(object sender, MouseEventArgs e)
     {
-        if (_isPointerDown && e.LeftButton == MouseButtonState.Pressed)
+        if (_isPointerDown && e.LeftButton == MouseButtonState.Pressed && sender is Image img && img.Tag is MirroringSlotViewModel slot)
         {
-            var touch = CalculateTouchEvent(e.GetPosition(ViewportImage), CoreTouchAction.Move);
+            var touch = CalculateTouchEvent(img, slot, e.GetPosition(img), CoreTouchAction.Move);
             if (touch != null)
             {
-                _ = ViewModel.ForwardTouchAsync(touch);
+                _ = slot.ForwardTouchAsync(touch);
             }
         }
     }
 
-    private void OnViewportMouseUp(object sender, MouseButtonEventArgs e)
+    private void OnSlotMouseUp(object sender, MouseButtonEventArgs e)
     {
-        if (_isPointerDown)
+        if (_isPointerDown && sender is Image img && img.Tag is MirroringSlotViewModel slot)
         {
             _isPointerDown = false;
-            ViewportImage.ReleaseMouseCapture();
-            var touch = CalculateTouchEvent(e.GetPosition(ViewportImage), CoreTouchAction.Up);
+            img.ReleaseMouseCapture();
+            var touch = CalculateTouchEvent(img, slot, e.GetPosition(img), CoreTouchAction.Up);
             if (touch != null)
             {
-                _ = ViewModel.ForwardTouchAsync(touch);
+                _ = slot.ForwardTouchAsync(touch);
             }
         }
     }
 
-    private void OnViewportMouseRightButtonUp(object sender, MouseButtonEventArgs e)
+    private void OnSlotMouseRightButtonUp(object sender, MouseButtonEventArgs e)
     {
-        // Right click behaves as Back button on Android/iOS
-        _ = ViewModel.SendBackAsync();
+        if (sender is Image img && img.Tag is MirroringSlotViewModel slot)
+        {
+            // Chuột phải tương ứng với nút Back
+            _ = slot.SendBackAsync();
+        }
     }
 
-    private void OnViewportMouseWheel(object sender, MouseWheelEventArgs e)
+    private void OnSlotMouseWheel(object sender, MouseWheelEventArgs e)
     {
-        var pos = e.GetPosition(ViewportImage);
-        var normX = Math.Clamp(pos.X / ViewportImage.ActualWidth, 0.0, 1.0);
-        var normY = Math.Clamp(pos.Y / ViewportImage.ActualHeight, 0.0, 1.0);
+        if (sender is Image img && img.Tag is MirroringSlotViewModel slot)
+        {
+            if (img.ActualWidth <= 0 || img.ActualHeight <= 0) return;
 
-        var device = ViewModel.ActiveMirroringDevice?.Device;
-        int devW = device?.Info.Width ?? 1080;
-        int devH = device?.Info.Height ?? 2400;
+            var pos = e.GetPosition(img);
+            var normX = Math.Clamp(pos.X / img.ActualWidth, 0.0, 1.0);
+            var normY = Math.Clamp(pos.Y / img.ActualHeight, 0.0, 1.0);
 
-        int realX = (int)(normX * devW);
-        int realY = (int)(normY * devH);
+            var device = slot.DeviceItem?.Device;
+            int devW = slot.ScreenBitmap?.PixelWidth ?? device?.Info.Width ?? 1080;
+            int devH = slot.ScreenBitmap?.PixelHeight ?? device?.Info.Height ?? 2400;
 
-        var scrollEvent = new ScrollEvent(realX, realY, normX, normY, 0, e.Delta);
-        _ = ViewModel.ForwardScrollAsync(scrollEvent);
+            int realX = (int)(normX * devW);
+            int realY = (int)(normY * devH);
+
+            var scrollEvent = new ScrollEvent(realX, realY, normX, normY, 0, e.Delta);
+            _ = slot.ForwardScrollAsync(scrollEvent);
+        }
     }
 
-    private TouchEvent? CalculateTouchEvent(Point clickPoint, CoreTouchAction action)
+    private TouchEvent? CalculateTouchEvent(Image img, MirroringSlotViewModel slot, Point clickPoint, CoreTouchAction action)
     {
-        if (ViewportImage.ActualWidth <= 0 || ViewportImage.ActualHeight <= 0) return null;
+        if (img.ActualWidth <= 0 || img.ActualHeight <= 0) return null;
 
-        var normX = Math.Clamp(clickPoint.X / ViewportImage.ActualWidth, 0.0, 1.0);
-        var normY = Math.Clamp(clickPoint.Y / ViewportImage.ActualHeight, 0.0, 1.0);
+        var normX = Math.Clamp(clickPoint.X / img.ActualWidth, 0.0, 1.0);
+        var normY = Math.Clamp(clickPoint.Y / img.ActualHeight, 0.0, 1.0);
 
-        var device = ViewModel.ActiveMirroringDevice?.Device;
-        int devW = device?.Info.Width ?? 1080;
-        int devH = device?.Info.Height ?? 2400;
+        var device = slot.DeviceItem?.Device;
+        int devW = slot.ScreenBitmap?.PixelWidth ?? device?.Info.Width ?? 1080;
+        int devH = slot.ScreenBitmap?.PixelHeight ?? device?.Info.Height ?? 2400;
 
         int realX = (int)(normX * devW);
         int realY = (int)(normY * devH);

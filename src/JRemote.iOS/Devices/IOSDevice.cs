@@ -8,6 +8,7 @@ public class IOSDevice : IDevice
     private DeviceState _state = DeviceState.Connected;
 
     public DeviceInfo Info { get; }
+    public string? IpAddress => Info.IpAddress;
 
     public event EventHandler<DeviceStateChangedEventArgs>? StateChanged;
 

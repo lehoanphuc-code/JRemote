@@ -21,12 +21,14 @@ namespace JRemote.UI.ViewModels;
 
 public partial class MainViewModel : ObservableObject, IAsyncDisposable
 {
+    public const int MaxSlots = 3;
+
     private readonly AdbService _adbService;
     private readonly AirPlayAdvertiser _airPlayAdvertiser;
     private readonly AirPlayReceiverServer _airPlayReceiver;
-    private readonly WriteableBitmapRenderer _renderer;
 
-    private IMirroringSession? _activeSession;
+    [ObservableProperty]
+    private ObservableCollection<MirroringSlotViewModel> _activeSlots = new();
 
     [ObservableProperty]
     private ObservableCollection<DeviceItemViewModel> _devices = new();
@@ -92,12 +94,6 @@ public partial class MainViewModel : ObservableObject, IAsyncDisposable
         var airPlaySecurity = new AirPlaySecurity();
         _airPlayAdvertiser = new AirPlayAdvertiser(airPlaySecurity);
         _airPlayReceiver = new AirPlayReceiverServer(airPlaySecurity);
-        _renderer = new WriteableBitmapRenderer();
-
-        _renderer.BitmapCreatedOrResized += (s, bmp) =>
-        {
-            ScreenBitmap = bmp;
-        };
 
         _adbService.DeviceConnected += async (s, d) => await Application.Current.Dispatcher.InvokeAsync(RefreshDevicesAsync);
         _adbService.DeviceDisconnected += async (s, d) => await Application.Current.Dispatcher.InvokeAsync(RefreshDevicesAsync);
@@ -243,14 +239,7 @@ public partial class MainViewModel : ObservableObject, IAsyncDisposable
     private void HandleAirPlayClientConnected(AirPlayClientConnectedEventArgs e)
     {
         var existing = Devices.FirstOrDefault(d => d.Id == e.ClientIp);
-        if (existing != null)
-        {
-            if (ActiveMirroringDevice == existing && _activeSession?.IsRunning == true)
-            {
-                return; // Đang phản chiếu tốt, giữ nguyên
-            }
-        }
-        else
+        if (existing == null)
         {
             var iosDevice = new IOSDevice(e.ClientIp, e.DeviceName, e.ClientIp);
             existing = new DeviceItemViewModel(iosDevice);
@@ -259,23 +248,33 @@ public partial class MainViewModel : ObservableObject, IAsyncDisposable
 
         StatusMessage = $"iPhone kết nối AirPlay: {e.DeviceName}";
 
-        // Tự động mở session mirror nếu chưa chạy
-        if (_activeSession == null || !_activeSession.IsRunning)
+        // Tự động mở session mirror nếu chưa phản chiếu thiết bị này
+        if (!ActiveSlots.Any(s => s.DeviceItem.Id == e.ClientIp))
         {
-            _ = StartMirroringAsync(existing);
+            if (ActiveSlots.Count < MaxSlots)
+            {
+                _ = StartMirroringAsync(existing);
+            }
+            else
+            {
+                AppLogger.Log($"[AirPlay] Thiết bị {e.DeviceName} đã kết nối nhưng tất cả {MaxSlots} slot hiển thị đã đầy.");
+                StatusMessage = $"Đã đầy {MaxSlots} slot phản chiếu. Vui lòng đóng bớt 1 ô để hiển thị {e.DeviceName}.";
+            }
         }
     }
 
     private void HandleAirPlayClientDisconnected(string clientIp)
     {
+        var activeSlot = ActiveSlots.FirstOrDefault(s => s.DeviceItem.Id == clientIp);
+        if (activeSlot != null)
+        {
+            _ = CloseSlotAsync(activeSlot);
+        }
+
         var toRemove = Devices.FirstOrDefault(d => d.Id == clientIp);
         if (toRemove != null)
         {
             Devices.Remove(toRemove);
-            if (ActiveMirroringDevice == toRemove)
-            {
-                _ = StopMirroringAsync();
-            }
         }
     }
 
@@ -284,23 +283,33 @@ public partial class MainViewModel : ObservableObject, IAsyncDisposable
     {
         if (deviceVm == null) return;
 
-        if (_activeSession != null)
+        // Nếu thiết bị này đã đang phản chiếu thì chuyển sang tab phản chiếu
+        if (ActiveSlots.Any(s => s.DeviceItem.Id == deviceVm.Id))
         {
-            await StopMirroringAsync();
+            ShowLogsTab = false;
+            return;
+        }
+
+        if (ActiveSlots.Count >= MaxSlots)
+        {
+            StatusMessage = $"Đã đạt giới hạn tối đa {MaxSlots} thiết bị cùng lúc. Hãy đóng bớt 1 ô để tiếp tục.";
+            AppLogger.Log($"[Mirroring] Không thể mở thêm {deviceVm.Name}: Đã đầy {MaxSlots} slot.");
+            return;
         }
 
         try
         {
             StatusMessage = $"Đang bắt đầu phản chiếu {deviceVm.Name}...";
 
+            IMirroringSession session;
             if (deviceVm.Device is AndroidDevice androidDev)
             {
-                _activeSession = new AndroidMirroringSession(androidDev);
+                session = new AndroidMirroringSession(androidDev);
             }
             else if (deviceVm.Device is IOSDevice iosDev)
             {
                 var decoder = new OpenH264Decoder();
-                _activeSession = new IOSMirroringSession(iosDev, _airPlayReceiver, decoder);
+                session = new IOSMirroringSession(iosDev, _airPlayReceiver, decoder);
             }
             else
             {
@@ -308,108 +317,125 @@ public partial class MainViewModel : ObservableObject, IAsyncDisposable
                 return;
             }
 
-            _activeSession.FrameReceived += (s, frame) =>
+            var usedNumbers = ActiveSlots.Select(s => s.SlotNumber).ToHashSet();
+            int slotNumber = 1;
+            for (int i = 1; i <= MaxSlots; i++)
             {
-                _renderer.RenderFrame(frame);
-            };
+                if (!usedNumbers.Contains(i))
+                {
+                    slotNumber = i;
+                    break;
+                }
+            }
 
-            await _activeSession.StartAsync();
+            var slotVm = new MirroringSlotViewModel(slotNumber, deviceVm, session);
+            slotVm.CloseRequested += async (s, e) => await CloseSlotAsync(e);
 
+            await slotVm.StartAsync();
+
+            ActiveSlots.Add(slotVm);
             ActiveMirroringDevice = deviceVm;
             IsMirroringActive = true;
             ShowLogsTab = false; // Tự động hiển thị màn hình phản chiếu
-            StatusMessage = $"Đang phản chiếu: {deviceVm.Name}";
+            StatusMessage = $"Đang phản chiếu ({ActiveSlots.Count}/{MaxSlots} thiết bị): {deviceVm.Name}";
+            AppLogger.Log($"[Mirroring] Đã kích hoạt Slot {slotNumber} cho thiết bị: {deviceVm.Name}");
         }
         catch (Exception ex)
         {
             StatusMessage = $"Lỗi khởi động phản chiếu: {ex.Message}";
+            AppLogger.Log($"[Mirroring-LỖI] Khởi động phản chiếu {deviceVm.Name} thất bại: {ex.Message}");
+        }
+    }
+
+    [RelayCommand]
+    public async Task CloseSlotAsync(MirroringSlotViewModel? slotVm)
+    {
+        if (slotVm == null) return;
+
+        try
+        {
+            await slotVm.DisposeAsync();
+            ActiveSlots.Remove(slotVm);
+
+            IsMirroringActive = ActiveSlots.Count > 0;
+            if (ActiveSlots.Count == 0)
+            {
+                ActiveMirroringDevice = null;
+                ShowLogsTab = true; // Quay lại hiển thị nhật ký khi không còn thiết bị nào
+                StatusMessage = "Đã dừng toàn bộ phản chiếu.";
+            }
+            else
+            {
+                ActiveMirroringDevice = ActiveSlots.Last().DeviceItem;
+                StatusMessage = $"Đang phản chiếu {ActiveSlots.Count}/{MaxSlots} thiết bị.";
+            }
+
+            AppLogger.Log($"[Mirroring] Đã đóng Slot {slotVm.SlotNumber} ({slotVm.DeviceItem.Name}). Còn lại {ActiveSlots.Count} thiết bị.");
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Log($"[Mirroring-LỖI] Đóng slot thất bại: {ex.Message}");
         }
     }
 
     [RelayCommand]
     public async Task StopMirroringAsync()
     {
-        if (_activeSession != null)
+        var slots = ActiveSlots.ToList();
+        foreach (var slot in slots)
         {
-            await _activeSession.StopAsync();
-            await _activeSession.DisposeAsync();
-            _activeSession = null;
+            await CloseSlotAsync(slot);
         }
-
-        ActiveMirroringDevice = null;
-        IsMirroringActive = false;
-        ShowLogsTab = true; // Quay lại hiển thị nhật ký
-        StatusMessage = "Đã dừng phản chiếu.";
+        StatusMessage = "Đã dừng phản chiếu toàn bộ thiết bị.";
     }
 
     [RelayCommand]
     public async Task SendBackAsync()
     {
-        if (_activeSession?.InputController != null)
-            await _activeSession.InputController.SendBackAsync();
+        var target = ActiveSlots.LastOrDefault();
+        if (target != null) await target.SendBackAsync();
     }
 
     [RelayCommand]
     public async Task SendHomeAsync()
     {
-        if (_activeSession?.InputController != null)
-            await _activeSession.InputController.SendHomeAsync();
+        var target = ActiveSlots.LastOrDefault();
+        if (target != null) await target.SendHomeAsync();
     }
 
     [RelayCommand]
     public async Task SendRecentAppsAsync()
     {
-        if (_activeSession?.InputController != null)
-            await _activeSession.InputController.SendRecentAppsAsync();
+        var target = ActiveSlots.LastOrDefault();
+        if (target != null) await target.SendRecentAppsAsync();
     }
 
     [RelayCommand]
     public async Task SendPowerAsync()
     {
-        if (_activeSession?.InputController != null)
-            await _activeSession.InputController.SendPowerAsync();
+        var target = ActiveSlots.LastOrDefault();
+        if (target != null) await target.SendPowerAsync();
     }
 
     [RelayCommand]
     public async Task ForwardTouchAsync(TouchEvent touchEvent)
     {
-        if (_activeSession?.InputController != null)
-            await _activeSession.InputController.SendTouchAsync(touchEvent);
+        var target = ActiveSlots.LastOrDefault();
+        if (target != null) await target.ForwardTouchAsync(touchEvent);
     }
 
     [RelayCommand]
     public async Task ForwardScrollAsync(ScrollEvent scrollEvent)
     {
-        if (_activeSession?.InputController != null)
-            await _activeSession.InputController.SendScrollAsync(scrollEvent);
+        var target = ActiveSlots.LastOrDefault();
+        if (target != null) await target.ForwardScrollAsync(scrollEvent);
     }
 
     [RelayCommand]
     public void TakeScreenshot()
     {
-        if (ScreenBitmap == null) return;
-
-        try
-        {
-            var picturesPath = Environment.GetFolderPath(Environment.SpecialFolder.MyPictures);
-            var folder = Path.Combine(picturesPath, "JRemote");
-            Directory.CreateDirectory(folder);
-
-            var fileName = $"Screenshot_{DateTime.Now:yyyyMMdd_HHmmss}.png";
-            var filePath = Path.Combine(folder, fileName);
-
-            using var stream = new FileStream(filePath, FileMode.Create);
-            var encoder = new PngBitmapEncoder();
-            encoder.Frames.Add(BitmapFrame.Create(ScreenBitmap));
-            encoder.Save(stream);
-
-            Clipboard.SetImage(ScreenBitmap);
-            StatusMessage = $"Đã lưu ảnh chụp màn hình vào {filePath} (đã copy vào Clipboard)";
-        }
-        catch (Exception ex)
-        {
-            StatusMessage = $"Lỗi chụp màn hình: {ex.Message}";
-        }
+        var target = ActiveSlots.LastOrDefault();
+        target?.TakeScreenshot();
     }
 
     [RelayCommand]
@@ -437,6 +463,5 @@ public partial class MainViewModel : ObservableObject, IAsyncDisposable
         await StopMirroringAsync();
         await StopAirPlayAsync();
         _adbService.Dispose();
-        _renderer.Dispose();
     }
 }
