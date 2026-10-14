@@ -109,6 +109,16 @@ public class AirPlayMirroringServer : IAsyncDisposable
         }
     }
 
+    public bool IsCipherReady(string clientIp)
+    {
+        return _clientContexts.TryGetValue(clientIp, out var ctx) && ctx.IsCipherReady && ctx.AesCtrDecrypt != null;
+    }
+
+    public void ResetClientCipher(string clientIp)
+    {
+        _clientContexts.TryRemove(clientIp, out _);
+    }
+
     private async Task AcceptVideoLoopAsync(CancellationToken cancellationToken)
     {
         while (!cancellationToken.IsCancellationRequested && _isRunning)

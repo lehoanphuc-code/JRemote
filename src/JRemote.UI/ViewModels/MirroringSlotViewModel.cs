@@ -61,6 +61,15 @@ public partial class MirroringSlotViewModel : ObservableObject, IAsyncDisposable
         _renderer.RenderFrame(frame);
         _renderedFrames++;
 
+        if (_renderedFrames == 1 && frame.Width > 0 && frame.Height > 0)
+        {
+            Application.Current?.Dispatcher?.InvokeAsync(() =>
+            {
+                ResolutionText = $"{frame.Width}x{frame.Height}";
+                FpsText = "60 FPS";
+            });
+        }
+
         var now = DateTime.UtcNow;
         var elapsed = (now - _lastFpsTime).TotalSeconds;
         if (elapsed >= 1.0)

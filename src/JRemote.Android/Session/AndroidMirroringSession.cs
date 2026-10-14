@@ -96,6 +96,8 @@ public class AndroidMirroringSession : IMirroringSession
 
             var serverArgs = $"-s {serial} shell CLASSPATH=/data/local/tmp/scrcpy-server.jar app_process / com.genymobile.scrcpy.Server 2.4 log_level=info audio=false video=true control=true tunnel_forward=true send_frame_meta=false send_device_meta=false send_dummy_byte=false send_codec_meta=false max_size={maxRes} max_fps={maxFps} video_bit_rate={bitRate}";
 
+            var serverReadyTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
             var psi = new ProcessStartInfo
             {
                 FileName = adbExe,
@@ -114,6 +116,10 @@ public class AndroidMirroringSession : IMirroringSession
                     if (!string.IsNullOrWhiteSpace(e.Data))
                     {
                         AppLogger.Log($"[scrcpy-server {serial}] {e.Data}");
+                        if (e.Data.Contains("Device:") || e.Data.Contains("[server] INFO:"))
+                        {
+                            serverReadyTcs.TrySetResult(true);
+                        }
                     }
                 };
                 _serverProcess.ErrorDataReceived += (s, e) =>
@@ -127,37 +133,32 @@ public class AndroidMirroringSession : IMirroringSession
                 _serverProcess.BeginErrorReadLine();
             }
 
-            // 4. Kết nối TCP Socket 1 (Video Socket) với retry timeout 5 giây
-            var sw = Stopwatch.StartNew();
-            while (sw.ElapsedMilliseconds < 5000 && !_sessionCts.Token.IsCancellationRequested)
+            // 4. Chờ scrcpy-server trên Android khởi động và sẵn sàng chấp nhận socket kết nối (tối đa 8 giây)
+            AppLogger.Log($"[Android Scrcpy] Đang chờ scrcpy-server trên {serial} sẵn sàng...");
+            var completedTask = await Task.WhenAny(serverReadyTcs.Task, Task.Delay(8000, _sessionCts.Token));
+            if (completedTask != serverReadyTcs.Task)
             {
-                try
-                {
-                    var testClient = new TcpClient();
-                    await testClient.ConnectAsync("127.0.0.1", _localPort, _sessionCts.Token);
-                    if (testClient.Connected)
-                    {
-                        _videoClient = testClient;
-                        break;
-                    }
-                }
-                catch
-                {
-                    await Task.Delay(200, _sessionCts.Token);
-                }
+                AppLogger.Log($"[Android Scrcpy-CẢNH BÁO] Không nhận được tín hiệu sẵn sàng từ scrcpy-server trong 8s, thử kết nối trực tiếp...");
+            }
+            else
+            {
+                AppLogger.Log($"[Android Scrcpy] scrcpy-server đã sẵn sàng! Đang thiết lập kênh truyền...");
             }
 
-            if (_videoClient == null || !_videoClient.Connected)
-            {
-                throw new TimeoutException($"Không thể kết nối video socket tới cổng {_localPort} sau 5 giây.");
-            }
+            // Delay nhỏ 200ms để đảm bảo LocalServerSocket trên Android đã sẵn sàng
+            await Task.Delay(200, _sessionCts.Token);
 
-            // 5. Kết nối TCP Socket 2 (Control Socket)
+            // 5. Kết nối TCP Socket 1 (Video Socket)
+            _videoClient = new TcpClient();
+            await _videoClient.ConnectAsync("127.0.0.1", _localPort, _sessionCts.Token);
+
+            // 6. Kết nối TCP Socket 2 (Control Socket)
+            // LƯU Ý: Khi scrcpy chạy với tunnel_forward=true và control=true, server yêu cầu cả 2 socket kết nối thì mới bắt đầu stream
             try
             {
                 _controlClient = new TcpClient();
                 await _controlClient.ConnectAsync("127.0.0.1", _localPort, _sessionCts.Token);
-                AppLogger.Log($"[Android Scrcpy] Đã kết nối thành công Kênh Hình Ảnh và Kênh Điều Khiển ({serial}).");
+                AppLogger.Log($"[Android Scrcpy] Đã kết nối thành công Kênh Video và Kênh Điều Khiển ({serial}).");
             }
             catch (Exception ex)
             {
@@ -166,7 +167,7 @@ public class AndroidMirroringSession : IMirroringSession
                 _controlClient = null;
             }
 
-            // 6. Khởi chạy luồng đọc và giải mã luồng video H.264
+            // 7. Khởi chạy luồng đọc và giải mã luồng video H.264
             _ = Task.Run(() => ReadVideoStreamAsync(_videoClient, _sessionCts.Token), _sessionCts.Token);
         }
         catch (Exception ex)
@@ -194,7 +195,11 @@ public class AndroidMirroringSession : IMirroringSession
             while (!cancellationToken.IsCancellationRequested && client.Connected)
             {
                 int bytesRead = await stream.ReadAsync(buffer.AsMemory(0, buffer.Length), cancellationToken);
-                if (bytesRead == 0) break;
+                if (bytesRead == 0)
+                {
+                    AppLogger.Log($"[Android Stream] Kết nối video kết thúc (0 bytes read).");
+                    break;
+                }
 
                 long pts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
                 parser.FeedData(buffer, 0, bytesRead, nalUnit =>
@@ -202,7 +207,11 @@ public class AndroidMirroringSession : IMirroringSession
                     receivedNalCount++;
                     if (receivedNalCount == 1)
                     {
-                        AppLogger.Log($"[Android Stream] Đã nhận Frame video đầu tiên ({nalUnit.Length} bytes) từ {_androidDevice.Info.Name}!");
+                        AppLogger.Log($"[Android Stream] ★ Đã nhận Frame NAL đầu tiên ({nalUnit.Length} bytes) từ {_androidDevice.Info.Name}!");
+                    }
+                    else if (receivedNalCount % 180 == 0)
+                    {
+                        AppLogger.Log($"[Android Stream] Đã nhận {receivedNalCount} NAL units từ {_androidDevice.Info.Name}.");
                     }
 
                     if (_videoDecoder != null)
@@ -219,6 +228,10 @@ public class AndroidMirroringSession : IMirroringSession
         catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
         {
             AppLogger.Log($"[Android Stream] Luồng video kết thúc: {ex.Message}");
+        }
+        finally
+        {
+            AppLogger.Log($"[Android Stream] Đã đóng luồng video của {_androidDevice.Info.Name}. Tổng NAL nhận được: {receivedNalCount}");
         }
     }
 

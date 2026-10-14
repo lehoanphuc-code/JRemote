@@ -225,12 +225,14 @@ public class AirPlayReceiverServer : IAsyncDisposable
                                 using var ms = new MemoryStream(bodyBytes);
                                 var dict = plistReader.ReadObject(ms);
 
+                                bool hasNewEkey = false;
                                 if (dict.Contains("ekey") && dict["ekey"] is byte[] ekey)
                                 {
                                     var decryptedKey = _security.DecryptAesKey(ekey);
                                     if (decryptedKey != null)
                                     {
                                         _cachedDecryptedAesKeys[clientIp] = decryptedKey;
+                                        hasNewEkey = true;
                                     }
                                 }
 
@@ -257,10 +259,19 @@ public class AirPlayReceiverServer : IAsyncDisposable
 
                                 AppLogger.Log($"[AirPlay SETUP {clientIp}] Xác định StreamConnectionID: '{streamConnectionId}' (từ Plist: '{realStreamConnectionId ?? "None"}', URI: '{uri}')");
 
-                                // Khởi tạo Decryptor: Sử dụng AES Key (đã giải mã và lưu cache theo clientIp) + ECDH SharedSecret + streamConnectionID
-                                if (_cachedDecryptedAesKeys.TryGetValue(clientIp, out var cachedKey) && _security.SharedSecret != null && !string.IsNullOrEmpty(streamConnectionId) && streamConnectionId != "0")
+                                // Khởi tạo Decryptor: CHỈ khởi tạo khi có ekey mới HOẶC chưa từng khởi tạo Cipher cho Client này!
+                                // TUYỆT ĐỐI KHÔNG reset Cipher khi client đã đang streaming vì sẽ làm lệch counter AES-CTR!
+                                bool isCipherReady = _mirroringServer.IsCipherReady(clientIp);
+                                if ((hasNewEkey || !isCipherReady) &&
+                                    _cachedDecryptedAesKeys.TryGetValue(clientIp, out var cachedKey) && 
+                                    _security.SharedSecret != null && 
+                                    !string.IsNullOrEmpty(streamConnectionId) && streamConnectionId != "0")
                                 {
                                     _mirroringServer.InitCipher(clientIp, cachedKey, _security.SharedSecret, streamConnectionId);
+                                }
+                                else if (isCipherReady)
+                                {
+                                    AppLogger.Log($"[AirPlay SETUP {clientIp}] Giữ nguyên Cipher AES-CTR đang hoạt động (tránh làm lệch counter keystream).");
                                 }
                             }
                             catch (Exception ex)
@@ -312,6 +323,7 @@ public class AirPlayReceiverServer : IAsyncDisposable
                     {
                         _activeStreamingIps.TryRemove(clientIp, out _);
                         _cachedDecryptedAesKeys.TryRemove(clientIp, out _);
+                        _mirroringServer.ResetClientCipher(clientIp);
                         responseBytes = Encoding.UTF8.GetBytes($"{protocol} 200 OK\r\nCSeq: {cseq}\r\nServer: AirTunes/220.68\r\n\r\n");
                         await stream.WriteAsync(responseBytes, cancellationToken);
                         await stream.FlushAsync(cancellationToken);
