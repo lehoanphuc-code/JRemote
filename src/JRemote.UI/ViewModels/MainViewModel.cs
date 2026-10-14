@@ -61,6 +61,12 @@ public partial class MainViewModel : ObservableObject, IAsyncDisposable
     private WriteableBitmap? _screenBitmap;
 
     [ObservableProperty]
+    private string _appVersionText = "v" + (typeof(MainViewModel).Assembly.GetName().Version?.ToString(3) ?? "1.2.4");
+
+    [ObservableProperty]
+    private string _windowTitle = "JRemote v" + (typeof(MainViewModel).Assembly.GetName().Version?.ToString(3) ?? "1.2.4") + " - Phản Chiếu & Điều Khiển Điện Thoại (iOS & Android)";
+
+    [ObservableProperty]
     private string _statusMessage = "Sẵn sàng";
 
     [ObservableProperty]
@@ -352,11 +358,12 @@ public partial class MainViewModel : ObservableObject, IAsyncDisposable
     public async Task CloseSlotAsync(MirroringSlotViewModel? slotVm)
     {
         if (slotVm == null) return;
+        if (!ActiveSlots.Contains(slotVm)) return;
 
         try
         {
-            await slotVm.DisposeAsync();
             ActiveSlots.Remove(slotVm);
+            await slotVm.DisposeAsync();
 
             IsMirroringActive = ActiveSlots.Count > 0;
             if (ActiveSlots.Count == 0)

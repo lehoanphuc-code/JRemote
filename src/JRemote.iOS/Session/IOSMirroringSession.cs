@@ -91,6 +91,11 @@ public class IOSMirroringSession : IMirroringSession
         if (_airPlayServer != null)
         {
             _airPlayServer.VideoFrameReceived -= OnServerVideoFrameReceived;
+            var targetIp = _device.IpAddress ?? _device.Info.Id;
+            if (!string.IsNullOrEmpty(targetIp))
+            {
+                _airPlayServer.DisconnectClient(targetIp);
+            }
         }
         _videoDecoder?.Dispose();
         _device.UpdateState(DeviceState.Connected);

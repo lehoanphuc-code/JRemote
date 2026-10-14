@@ -6,7 +6,8 @@
         xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
         xmlns:vm="clr-namespace:JRemote.UI.ViewModels"
         mc:Ignorable="d"
-        Title="JRemote - Mirror &amp; Control"
+        Title="{Binding WindowTitle}"
+        Icon="app.ico"
         Height="780" Width="1100"
         MinHeight="600" MinWidth="900"
         WindowStartupLocation="CenterScreen"
@@ -24,7 +25,7 @@
         </Grid.RowDefinitions>
 
         <!-- TitleBar -->
-        <ui:TitleBar Grid.Row="0" Title="JRemote - Phản Chiếu &amp; Điều Khiển Điện Thoại (iOS &amp; Android)" />
+        <ui:TitleBar Grid.Row="0" Title="{Binding WindowTitle}" />
 
         <!-- Main Content -->
         <Grid Grid.Row="1" Margin="16,8,16,16">
@@ -420,8 +421,26 @@
         </Grid>
         <!-- Status Bar Footer -->
         <StatusBar Grid.Row="2" Background="#14161a" BorderBrush="#252830" BorderThickness="0,1,0,0">
-            <StatusBarItem>
-                <TextBlock Text="{Binding StatusMessage}" FontSize="12" Foreground="#888888" />
+            <StatusBar.ItemsPanel>
+                <ItemsPanelTemplate>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                    </Grid>
+                </ItemsPanelTemplate>
+            </StatusBar.ItemsPanel>
+            <StatusBarItem Grid.Column="0">
+                <TextBlock Text="{Binding StatusMessage}" FontSize="12" Foreground="#888888" VerticalAlignment="Center" />
+            </StatusBarItem>
+            <StatusBarItem Grid.Column="1" HorizontalAlignment="Right">
+                <Border Background="#1b212c" BorderBrush="#204060" BorderThickness="1" CornerRadius="4" Padding="8,2" Margin="0,0,12,0">
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <ui:SymbolIcon Symbol="Tag20" FontSize="12" Foreground="#00c6ff" Margin="0,0,5,0" />
+                        <TextBlock Text="{Binding AppVersionText}" FontSize="11" Foreground="#00c6ff" FontWeight="SemiBold" />
+                    </StackPanel>
+                </Border>
             </StatusBarItem>
         </StatusBar>
     </Grid>

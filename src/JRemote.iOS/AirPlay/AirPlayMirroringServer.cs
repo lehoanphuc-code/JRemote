@@ -39,6 +39,7 @@ public class AirPlayMirroringServer : IAsyncDisposable
     private bool _isRunning;
 
     private readonly ConcurrentDictionary<string, AirPlayClientStreamContext> _clientContexts = new();
+    private readonly ConcurrentDictionary<string, ConcurrentDictionary<TcpClient, byte>> _videoSockets = new();
 
     public int Port { get; }
     public event EventHandler<AirPlayFrameEventArgs>? VideoFrameReceived;
@@ -135,6 +136,8 @@ public class AirPlayMirroringServer : IAsyncDisposable
                 var remoteEp = client.Client.RemoteEndPoint?.ToString() ?? "Unknown";
                 AppLogger.Log($"[AirPlay Video] >>> Thiết bị đã kết nối kênh hình ảnh từ: {remoteEp} (IP: {clientIp})");
 
+                _videoSockets.GetOrAdd(clientIp, _ => new()).TryAdd(client, 0);
+
                 // Khởi tạo mới trạng thái Cipher cho luồng video kết nối mới từ clientIp này
                 var ctx = _clientContexts.GetOrAdd(clientIp, ip => new AirPlayClientStreamContext { ClientIp = ip });
                 if (ctx.CurrentKey != null && ctx.CurrentIV != null)
@@ -162,14 +165,33 @@ public class AirPlayMirroringServer : IAsyncDisposable
         }
     }
 
+    public void DisconnectClient(string clientIp)
+    {
+        AppLogger.Log($"[AirPlay Video] Ngắt kết nối video socket của iPhone {clientIp}...");
+        ResetClientCipher(clientIp);
+
+        if (_videoSockets.TryRemove(clientIp, out var sockets))
+        {
+            foreach (var client in sockets.Keys)
+            {
+                try
+                {
+                    client.Close();
+                    client.Dispose();
+                }
+                catch { }
+            }
+        }
+    }
+
     private async Task ReadVideoStreamAsync(TcpClient client, string clientIp, CancellationToken cancellationToken)
     {
-        using var stream = client.GetStream();
         var headerBuffer = new byte[128];
         var ctx = _clientContexts.GetOrAdd(clientIp, ip => new AirPlayClientStreamContext { ClientIp = ip });
 
         try
         {
+            using var stream = client.GetStream();
             while (!cancellationToken.IsCancellationRequested && client.Connected)
             {
                 // Đọc 128 bytes header
@@ -219,6 +241,18 @@ public class AirPlayMirroringServer : IAsyncDisposable
         catch (Exception ex)
         {
             AppLogger.Log($"[AirPlay Video] Kết nối truyền hình ảnh từ {clientIp} đã đóng: {ex.Message}");
+        }
+        finally
+        {
+            if (_videoSockets.TryGetValue(clientIp, out var sockets))
+            {
+                sockets.TryRemove(client, out _);
+                if (sockets.IsEmpty)
+                {
+                    _videoSockets.TryRemove(clientIp, out _);
+                }
+            }
+            try { client.Dispose(); } catch { }
         }
     }
 
@@ -380,6 +414,12 @@ public class AirPlayMirroringServer : IAsyncDisposable
         _isRunning = false;
         _cts?.Cancel();
         try { _listener?.Stop(); } catch { }
+
+        foreach (var ip in _videoSockets.Keys.ToList())
+        {
+            DisconnectClient(ip);
+        }
+
         _cts?.Dispose();
         _clientContexts.Clear();
         await Task.CompletedTask;

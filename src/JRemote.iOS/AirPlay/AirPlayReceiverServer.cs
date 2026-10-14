@@ -22,6 +22,7 @@ public class AirPlayReceiverServer : IAsyncDisposable
     private bool _isRunning;
     private readonly ConcurrentDictionary<string, bool> _activeStreamingIps = new();
     private readonly ConcurrentDictionary<string, byte[]> _cachedDecryptedAesKeys = new();
+    private readonly ConcurrentDictionary<string, ConcurrentDictionary<TcpClient, byte>> _clientSockets = new();
     private readonly AirPlaySecurity _security;
     private readonly AirPlayMirroringServer _mirroringServer;
 
@@ -73,8 +74,40 @@ public class AirPlayReceiverServer : IAsyncDisposable
         _isRunning = false;
         _cts?.Cancel();
         try { _listener?.Stop(); } catch { }
+
+        foreach (var ip in _clientSockets.Keys.ToList())
+        {
+            DisconnectClient(ip);
+        }
+
         await _mirroringServer.DisposeAsync();
         AppLogger.Log("[AirPlay Server] Đã dừng server.");
+    }
+
+    public void DisconnectClient(string clientIp)
+    {
+        AppLogger.Log($"[AirPlay Server] Ngắt kết nối toàn bộ socket của iPhone {clientIp}...");
+        _activeStreamingIps.TryRemove(clientIp, out _);
+        _cachedDecryptedAesKeys.TryRemove(clientIp, out _);
+
+        // Đóng kênh truyền video mirroring cổng 7011
+        _mirroringServer.DisconnectClient(clientIp);
+
+        // Đóng toàn bộ các socket RTSP cổng 7000
+        if (_clientSockets.TryRemove(clientIp, out var sockets))
+        {
+            foreach (var client in sockets.Keys)
+            {
+                try
+                {
+                    client.Close();
+                    client.Dispose();
+                }
+                catch { }
+            }
+        }
+
+        ClientDisconnected?.Invoke(this, clientIp);
     }
 
     private async Task AcceptLoopAsync(CancellationToken cancellationToken)
@@ -84,10 +117,13 @@ public class AirPlayReceiverServer : IAsyncDisposable
             try
             {
                 var client = await _listener!.AcceptTcpClientAsync(cancellationToken);
+                var clientIp = ((IPEndPoint)client.Client.RemoteEndPoint!).Address.ToString();
                 var remoteEp = client.Client.RemoteEndPoint?.ToString() ?? "Unknown";
-                AppLogger.Log($"[AirPlay TCP] >>> Thiết bị đã kết nối thành công từ: {remoteEp}");
+                AppLogger.Log($"[AirPlay TCP] >>> Thiết bị đã kết nối thành công từ: {remoteEp} (IP: {clientIp})");
 
-                _ = Task.Run(() => HandleClientAsync(client, remoteEp, cancellationToken), cancellationToken);
+                _clientSockets.GetOrAdd(clientIp, _ => new()).TryAdd(client, 0);
+
+                _ = Task.Run(() => HandleClientAsync(client, remoteEp, clientIp, cancellationToken), cancellationToken);
             }
             catch (OperationCanceledException)
             {
@@ -100,17 +136,15 @@ public class AirPlayReceiverServer : IAsyncDisposable
         }
     }
 
-    private async Task HandleClientAsync(TcpClient client, string remoteEp, CancellationToken cancellationToken)
+    private async Task HandleClientAsync(TcpClient client, string remoteEp, string clientIp, CancellationToken cancellationToken)
     {
-        using var stream = client.GetStream();
-        var clientIp = ((IPEndPoint)client.Client.RemoteEndPoint!).Address.ToString();
         var deviceName = $"iPhone [{clientIp}]";
-
         var receiveBuffer = new byte[65536];
         int bufferCount = 0;
 
         try
         {
+            using var stream = client.GetStream();
             while (!cancellationToken.IsCancellationRequested && client.Connected)
             {
                 int bytesRead = await stream.ReadAsync(receiveBuffer.AsMemory(bufferCount, receiveBuffer.Length - bufferCount), cancellationToken);
@@ -331,9 +365,26 @@ public class AirPlayReceiverServer : IAsyncDisposable
         catch (Exception ex)
         {
             AppLogger.Log($"[AirPlay TCP-LỖI] Kết nối {remoteEp} gặp sự cố: {ex.Message}");
-            _activeStreamingIps.TryRemove(clientIp, out _);
-            _cachedDecryptedAesKeys.TryRemove(clientIp, out _);
-            ClientDisconnected?.Invoke(this, clientIp);
+        }
+        finally
+        {
+            if (_clientSockets.TryGetValue(clientIp, out var sockets))
+            {
+                sockets.TryRemove(client, out _);
+                if (sockets.IsEmpty)
+                {
+                    _clientSockets.TryRemove(clientIp, out _);
+                }
+            }
+            try { client.Dispose(); } catch { }
+
+            if (!_clientSockets.ContainsKey(clientIp))
+            {
+                _activeStreamingIps.TryRemove(clientIp, out _);
+                _cachedDecryptedAesKeys.TryRemove(clientIp, out _);
+                _mirroringServer.ResetClientCipher(clientIp);
+                ClientDisconnected?.Invoke(this, clientIp);
+            }
         }
     }
 
