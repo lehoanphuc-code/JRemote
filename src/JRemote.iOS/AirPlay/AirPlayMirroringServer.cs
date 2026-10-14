@@ -114,6 +114,11 @@ public class AirPlayMirroringServer : IAsyncDisposable
         return _clientContexts.TryGetValue(clientIp, out var ctx) && ctx.IsCipherReady && ctx.AesCtrDecrypt != null;
     }
 
+    public bool IsReceivingVideo(string clientIp)
+    {
+        return _clientContexts.TryGetValue(clientIp, out var ctx) && ctx.ReceivedFrameCount > 0;
+    }
+
     public void ResetClientCipher(string clientIp)
     {
         _clientContexts.TryRemove(clientIp, out _);

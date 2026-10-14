@@ -204,19 +204,7 @@ public class AirPlayReceiverServer : IAsyncDisposable
                     {
                         string? realStreamConnectionId = null;
 
-                        // 1. Lấy streamConnectionID từ URI dự phòng (ví dụ rtsp://180.77.15.98/5605339878155243194)
-                        var streamConnectionId = "0";
-                        var lastSlash = uri.LastIndexOf('/');
-                        if (lastSlash >= 0 && lastSlash < uri.Length - 1)
-                        {
-                            var seg = uri.Substring(lastSlash + 1).Trim();
-                            if (ulong.TryParse(seg, out var uSeg))
-                            {
-                                streamConnectionId = uSeg.ToString();
-                            }
-                        }
-
-                        // 2. Parse SETUP body (Binary Plist) để lấy ekey và streamConnectionID
+                        // 1. Parse SETUP body (Binary Plist) để lấy ekey và streamConnectionID
                         if (bodyBytes.Length > 0)
                         {
                             try
@@ -225,14 +213,12 @@ public class AirPlayReceiverServer : IAsyncDisposable
                                 using var ms = new MemoryStream(bodyBytes);
                                 var dict = plistReader.ReadObject(ms);
 
-                                bool hasNewEkey = false;
                                 if (dict.Contains("ekey") && dict["ekey"] is byte[] ekey)
                                 {
                                     var decryptedKey = _security.DecryptAesKey(ekey);
                                     if (decryptedKey != null)
                                     {
                                         _cachedDecryptedAesKeys[clientIp] = decryptedKey;
-                                        hasNewEkey = true;
                                     }
                                 }
 
@@ -252,26 +238,26 @@ public class AirPlayReceiverServer : IAsyncDisposable
                                     }
                                 }
 
+                                AppLogger.Log($"[AirPlay SETUP {clientIp}] Nhận request SETUP (StreamConnectionID từ Plist: '{realStreamConnectionId ?? "None"}', URI: '{uri}')");
+
+                                // Khởi tạo Decryptor:
+                                // CHỈ khởi tạo khi iPhone đã cung cấp realStreamConnectionId từ Plist (TUYỆT ĐỐI không dùng ID tạm từ URI).
+                                // VÀ CHỈ khởi tạo khi client chưa đang trong quá trình stream video liên tục (ReceivedFrameCount == 0).
                                 if (!string.IsNullOrEmpty(realStreamConnectionId) && realStreamConnectionId != "0")
                                 {
-                                    streamConnectionId = realStreamConnectionId;
+                                    bool isAlreadyStreaming = _mirroringServer.IsReceivingVideo(clientIp);
+                                    if (!isAlreadyStreaming && _cachedDecryptedAesKeys.TryGetValue(clientIp, out var cachedKey) && _security.SharedSecret != null)
+                                    {
+                                        _mirroringServer.InitCipher(clientIp, cachedKey, _security.SharedSecret, realStreamConnectionId);
+                                    }
+                                    else if (isAlreadyStreaming)
+                                    {
+                                        AppLogger.Log($"[AirPlay SETUP {clientIp}] Giữ nguyên Cipher AES-CTR đang giải mã video (tránh làm lệch counter keystream).");
+                                    }
                                 }
-
-                                AppLogger.Log($"[AirPlay SETUP {clientIp}] Xác định StreamConnectionID: '{streamConnectionId}' (từ Plist: '{realStreamConnectionId ?? "None"}', URI: '{uri}')");
-
-                                // Khởi tạo Decryptor: CHỈ khởi tạo khi có ekey mới HOẶC chưa từng khởi tạo Cipher cho Client này!
-                                // TUYỆT ĐỐI KHÔNG reset Cipher khi client đã đang streaming vì sẽ làm lệch counter AES-CTR!
-                                bool isCipherReady = _mirroringServer.IsCipherReady(clientIp);
-                                if ((hasNewEkey || !isCipherReady) &&
-                                    _cachedDecryptedAesKeys.TryGetValue(clientIp, out var cachedKey) && 
-                                    _security.SharedSecret != null && 
-                                    !string.IsNullOrEmpty(streamConnectionId) && streamConnectionId != "0")
+                                else
                                 {
-                                    _mirroringServer.InitCipher(clientIp, cachedKey, _security.SharedSecret, streamConnectionId);
-                                }
-                                else if (isCipherReady)
-                                {
-                                    AppLogger.Log($"[AirPlay SETUP {clientIp}] Giữ nguyên Cipher AES-CTR đang hoạt động (tránh làm lệch counter keystream).");
+                                    AppLogger.Log($"[AirPlay SETUP {clientIp}] Request SETUP chưa chứa streamConnectionID trong Plist, đã lưu ekey và chờ SETUP tiếp theo...");
                                 }
                             }
                             catch (Exception ex)
