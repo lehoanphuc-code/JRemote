@@ -304,7 +304,8 @@ public partial class MainViewModel : ObservableObject, IAsyncDisposable
             IMirroringSession session;
             if (deviceVm.Device is AndroidDevice androidDev)
             {
-                session = new AndroidMirroringSession(androidDev);
+                var decoder = new OpenH264Decoder();
+                session = new AndroidMirroringSession(androidDev, decoder);
             }
             else if (deviceVm.Device is IOSDevice iosDev)
             {
