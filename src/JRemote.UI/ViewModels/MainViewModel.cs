@@ -136,6 +136,9 @@ public partial class MainViewModel : ObservableObject, IAsyncDisposable
 
     public async Task InitializeAsync()
     {
+        // 1. Tự động kiểm tra bản cập nhật mới trên GitHub ngay khi mở app (chạy nền hoàn toàn)
+        _ = Task.Run(CheckForUpdatesAsync);
+
         StatusMessage = "Đang kết nối ADB server...";
         var adbOk = await _adbService.InitializeAsync();
         if (adbOk)
@@ -151,9 +154,6 @@ public partial class MainViewModel : ObservableObject, IAsyncDisposable
         // Tự động bật AirPlay receiver
         await StartAirPlayAsync();
         StatusMessage = "Khởi tạo hoàn tất";
-
-        // Tự động kiểm tra bản cập nhật mới trên GitHub (chạy nền không chặn UI)
-        _ = CheckForUpdatesAsync();
     }
 
     [RelayCommand]
@@ -505,7 +505,7 @@ public partial class MainViewModel : ObservableObject, IAsyncDisposable
             var info = await updateService.CheckForUpdateAsync(AppVersionText);
             if (info != null && info.IsUpdateAvailable)
             {
-                await Application.Current.Dispatcher.InvokeAsync(() =>
+                var applyInfo = () =>
                 {
                     _pendingUpdateInfo = info;
                     UpdateVersionTag = info.TagName;
@@ -513,7 +513,16 @@ public partial class MainViewModel : ObservableObject, IAsyncDisposable
                     IsUpdateAvailable = true;
                     IsUpdateBannerVisible = true;
                     StatusMessage = $"Có bản cập nhật mới: {info.TagName}!";
-                });
+                };
+
+                if (Application.Current?.Dispatcher != null)
+                {
+                    await Application.Current.Dispatcher.InvokeAsync(applyInfo);
+                }
+                else
+                {
+                    applyInfo();
+                }
             }
         }
         catch (Exception ex)
