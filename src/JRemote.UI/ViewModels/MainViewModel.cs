@@ -6,6 +6,7 @@ using JRemote.Android.Session;
 using JRemote.Core.Interfaces;
 using JRemote.Core.Logging;
 using JRemote.Core.Models;
+using JRemote.Core.Services;
 using JRemote.iOS.AirPlay;
 using JRemote.iOS.Bonjour;
 using JRemote.iOS.Devices;
@@ -69,6 +70,32 @@ public partial class MainViewModel : ObservableObject, IAsyncDisposable
     [ObservableProperty]
     private string _statusMessage = "Sẵn sàng";
 
+    private UpdateInfo? _pendingUpdateInfo;
+
+    [ObservableProperty]
+    private bool _isUpdateAvailable;
+
+    [ObservableProperty]
+    private string _updateVersionTag = string.Empty;
+
+    [ObservableProperty]
+    private string _updateNotes = string.Empty;
+
+    [ObservableProperty]
+    private bool _isDownloadingUpdate;
+
+    [ObservableProperty]
+    private bool _isNotDownloadingUpdate = true;
+
+    [ObservableProperty]
+    private double _downloadProgressPercent;
+
+    [ObservableProperty]
+    private string _downloadProgressText = string.Empty;
+
+    [ObservableProperty]
+    private bool _isUpdateBannerVisible;
+
     [ObservableProperty]
     private ObservableCollection<string> _logEntries = new();
 
@@ -124,6 +151,9 @@ public partial class MainViewModel : ObservableObject, IAsyncDisposable
         // Tự động bật AirPlay receiver
         await StartAirPlayAsync();
         StatusMessage = "Khởi tạo hoàn tất";
+
+        // Tự động kiểm tra bản cập nhật mới trên GitHub (chạy nền không chặn UI)
+        _ = CheckForUpdatesAsync();
     }
 
     [RelayCommand]
@@ -464,6 +494,96 @@ public partial class MainViewModel : ObservableObject, IAsyncDisposable
         var allText = string.Join(Environment.NewLine, LogEntries);
         Clipboard.SetText(allText);
         StatusMessage = "Đã sao chép toàn bộ nhật ký vào Clipboard!";
+    }
+
+    [RelayCommand]
+    public async Task CheckForUpdatesAsync()
+    {
+        try
+        {
+            var updateService = new UpdateService();
+            var info = await updateService.CheckForUpdateAsync(AppVersionText);
+            if (info != null && info.IsUpdateAvailable)
+            {
+                await Application.Current.Dispatcher.InvokeAsync(() =>
+                {
+                    _pendingUpdateInfo = info;
+                    UpdateVersionTag = info.TagName;
+                    UpdateNotes = info.ReleaseTitle ?? info.TagName;
+                    IsUpdateAvailable = true;
+                    IsUpdateBannerVisible = true;
+                    StatusMessage = $"Có bản cập nhật mới: {info.TagName}!";
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Log($"[AutoUpdate] Lỗi kiểm tra cập nhật: {ex.Message}");
+        }
+    }
+
+    [RelayCommand]
+    public async Task ApplyUpdateAsync()
+    {
+        if (_pendingUpdateInfo == null || IsDownloadingUpdate) return;
+
+        IsDownloadingUpdate = true;
+        IsNotDownloadingUpdate = false;
+        DownloadProgressPercent = 0;
+        DownloadProgressText = "Đang kết nối GitHub...";
+        StatusMessage = $"Đang tải bản cập nhật {_pendingUpdateInfo.TagName}...";
+
+        try
+        {
+            var updateService = new UpdateService();
+            var progress = new Progress<(long downloaded, long total)>(p =>
+            {
+                if (p.total > 0)
+                {
+                    var pct = (double)p.downloaded / p.total * 100.0;
+                    DownloadProgressPercent = Math.Round(pct, 1);
+                    var dlMb = (double)p.downloaded / (1024 * 1024);
+                    var totMb = (double)p.total / (1024 * 1024);
+                    DownloadProgressText = $"Đang tải: {dlMb:F1} MB / {totMb:F1} MB ({DownloadProgressPercent:F0}%)";
+                }
+            });
+
+            var sourceDir = await updateService.DownloadAndExtractAsync(_pendingUpdateInfo, progress);
+
+            DownloadProgressText = "Tải hoàn tất! Đang khởi động lại ứng dụng...";
+            StatusMessage = "Đang khởi động lại để hoàn tất cập nhật...";
+            await Task.Delay(1000);
+
+            updateService.LaunchUpdaterAndRestart(sourceDir);
+            Application.Current?.Dispatcher?.Invoke(() =>
+            {
+                Application.Current.Shutdown();
+            });
+            Environment.Exit(0);
+        }
+        catch (Exception ex)
+        {
+            IsDownloadingUpdate = false;
+            IsNotDownloadingUpdate = true;
+            DownloadProgressText = string.Empty;
+            StatusMessage = $"Lỗi cập nhật: {ex.Message}";
+            AppLogger.Log($"[AutoUpdate-LỖI] {ex.Message}");
+        }
+    }
+
+    [RelayCommand]
+    public void DismissUpdateBanner()
+    {
+        IsUpdateBannerVisible = false;
+    }
+
+    [RelayCommand]
+    public void ShowUpdateBanner()
+    {
+        if (IsUpdateAvailable)
+        {
+            IsUpdateBannerVisible = true;
+        }
     }
 
     public async ValueTask DisposeAsync()

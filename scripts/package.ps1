@@ -21,6 +21,7 @@ Write-Host "==> Checking external binaries (adb & scrcpy)..." -ForegroundColor Y
 & "$PSScriptRoot\download-tools.ps1"
 
 # 2. Clean previous publish folder
+Stop-Process -Name adb -Force -ErrorAction SilentlyContinue
 if (Test-Path $publishDir) {
     Write-Host "==> Cleaning previous publish directory..." -ForegroundColor Yellow
     Remove-Item -Recurse -Force $publishDir
