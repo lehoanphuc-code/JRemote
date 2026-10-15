@@ -20,13 +20,13 @@ public class AirPlayAdvertiser : IAsyncDisposable
     private bool _isAdvertising;
 
     public AirPlaySecurity Security { get; }
-    public string ServerName { get; }
+    public string ServerName { get; private set; }
     public int AirPlayPort { get; }
 
     public AirPlayAdvertiser(AirPlaySecurity? security = null, string serverName = "JRemote-PC", int airPlayPort = 7000)
     {
         Security = security ?? new AirPlaySecurity();
-        ServerName = serverName;
+        ServerName = string.IsNullOrWhiteSpace(serverName) ? "JRemote-PC" : serverName;
         AirPlayPort = airPlayPort;
     }
 
@@ -128,6 +128,26 @@ public class AirPlayAdvertiser : IAsyncDisposable
         }
 
         return Task.CompletedTask;
+    }
+
+    public async Task UpdateServerNameAsync(string newServerName, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(newServerName)) return;
+        newServerName = newServerName.Trim();
+        if (ServerName == newServerName && _isAdvertising) return;
+
+        var wasAdvertising = _isAdvertising;
+        if (wasAdvertising)
+        {
+            await StopAsync();
+        }
+
+        ServerName = newServerName;
+
+        if (wasAdvertising)
+        {
+            await StartAsync(cancellationToken);
+        }
     }
 
     private static (List<IPAddress> Ips, string MacWithColons, string MacNoColons, string NicName) GetPrimaryNetworkDetails()

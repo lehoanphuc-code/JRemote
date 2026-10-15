@@ -30,15 +30,17 @@ public class AirPlayReceiverServer : IAsyncDisposable
     public bool IsRunning => _isRunning;
     public AirPlaySecurity Security => _security;
     public AirPlayMirroringServer MirroringServer => _mirroringServer;
+    public string ServerName { get; set; } = "JRemote-PC";
 
     public event EventHandler<AirPlayClientConnectedEventArgs>? ClientConnected;
     public event EventHandler<string>? ClientDisconnected;
     public event EventHandler<AirPlayFrameEventArgs>? VideoFrameReceived;
 
-    public AirPlayReceiverServer(AirPlaySecurity? security = null, int port = 7000, int videoDataPort = 7011)
+    public AirPlayReceiverServer(AirPlaySecurity? security = null, int port = 7000, int videoDataPort = 7011, string serverName = "JRemote-PC")
     {
         _security = security ?? new AirPlaySecurity();
         Port = port;
+        ServerName = serverName;
         _mirroringServer = new AirPlayMirroringServer(videoDataPort);
         _mirroringServer.VideoFrameReceived += (s, frame) => VideoFrameReceived?.Invoke(this, frame);
     }
@@ -417,7 +419,7 @@ public class AirPlayReceiverServer : IAsyncDisposable
                 <key>model</key>
                 <string>AppleTV3,2</string>
                 <key>name</key>
-                <string>JRemote-PC</string>
+                <string>{ServerName}</string>
                 <key>pi</key>
                 <string>2e388006-13ba-4041-9a67-25dd4a43d536</string>
                 <key>pk</key>

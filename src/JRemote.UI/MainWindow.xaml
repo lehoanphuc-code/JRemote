@@ -123,8 +123,31 @@
                             </ui:Button>
                         </Grid>
                         <TextBlock Text="{Binding AirPlayStatus}" FontSize="12" Foreground="#888888" TextWrapping="Wrap" Margin="0,0,0,6" />
+
+                        <!-- Tùy chỉnh tên hiển thị AirPlay -->
+                        <Grid Margin="0,2,0,8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <ui:TextBox Grid.Column="0" 
+                                        PlaceholderText="Tên thiết bị AirPlay (ví dụ: JRemote-Phuc)" 
+                                        Text="{Binding AirPlayDeviceName, UpdateSourceTrigger=PropertyChanged}" 
+                                        FontSize="12" Padding="8,5" Margin="0,0,6,0" />
+                            <ui:Button Grid.Column="1" 
+                                       Appearance="Secondary" 
+                                       Padding="10,5"
+                                       ToolTip="Lưu và phát sóng tên AirPlay mới"
+                                       Command="{Binding SaveAirPlayDeviceNameCommand}">
+                                <StackPanel Orientation="Horizontal">
+                                    <ui:SymbolIcon Symbol="Checkmark20" Margin="0,0,4,0" />
+                                    <TextBlock Text="Đổi tên" FontSize="12" />
+                                </StackPanel>
+                            </ui:Button>
+                        </Grid>
+
                         <Border Background="#1a2530" CornerRadius="4" Padding="8,6">
-                            <TextBlock Text="💡 Trên iPhone: Mở Control Center ➔ Chọn 'Phản chiếu màn hình' ➔ Chọn 'JRemote-PC'"
+                            <TextBlock Text="{Binding AirPlayHintText}"
                                        FontSize="11" Foreground="#61afef" TextWrapping="Wrap" />
                         </Border>
                     </StackPanel>

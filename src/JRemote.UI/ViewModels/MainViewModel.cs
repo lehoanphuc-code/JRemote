@@ -24,9 +24,17 @@ public partial class MainViewModel : ObservableObject, IAsyncDisposable
 {
     public const int MaxSlots = 3;
 
+    private readonly SettingsService _settingsService = new();
+    private AppSettings _appSettings;
     private readonly AdbService _adbService;
     private readonly AirPlayAdvertiser _airPlayAdvertiser;
     private readonly AirPlayReceiverServer _airPlayReceiver;
+
+    [ObservableProperty]
+    private string _airPlayDeviceName = string.Empty;
+
+    [ObservableProperty]
+    private string _airPlayHintText = string.Empty;
 
     [ObservableProperty]
     private ObservableCollection<MirroringSlotViewModel> _activeSlots = new();
@@ -123,10 +131,15 @@ public partial class MainViewModel : ObservableObject, IAsyncDisposable
                 if (LogEntries.Count > 300) LogEntries.RemoveAt(0);
             });
         };
+
+        _appSettings = _settingsService.LoadSettings();
+        AirPlayDeviceName = _appSettings.AirPlayDeviceName;
+        AirPlayHintText = $"💡 Trên iPhone: Mở Control Center ➔ Chọn 'Phản chiếu màn hình' ➔ Chọn '{AirPlayDeviceName}'";
+
         _adbService = new AdbService();
         var airPlaySecurity = new AirPlaySecurity();
-        _airPlayAdvertiser = new AirPlayAdvertiser(airPlaySecurity);
-        _airPlayReceiver = new AirPlayReceiverServer(airPlaySecurity);
+        _airPlayAdvertiser = new AirPlayAdvertiser(airPlaySecurity, AirPlayDeviceName);
+        _airPlayReceiver = new AirPlayReceiverServer(airPlaySecurity, serverName: AirPlayDeviceName);
 
         _adbService.DeviceConnected += async (s, d) => await Application.Current.Dispatcher.InvokeAsync(RefreshDevicesAsync);
         _adbService.DeviceDisconnected += async (s, d) => await Application.Current.Dispatcher.InvokeAsync(RefreshDevicesAsync);
@@ -247,6 +260,33 @@ public partial class MainViewModel : ObservableObject, IAsyncDisposable
         {
             await StartAirPlayAsync();
         }
+    }
+
+    [RelayCommand]
+    public async Task SaveAirPlayDeviceNameAsync()
+    {
+        var newName = AirPlayDeviceName?.Trim();
+        if (string.IsNullOrWhiteSpace(newName))
+        {
+            StatusMessage = "Tên thiết bị AirPlay không được để trống!";
+            return;
+        }
+
+        // Giới hạn độ dài tên
+        if (newName.Length > 28)
+        {
+            newName = newName[..28];
+        }
+        AirPlayDeviceName = newName;
+
+        _appSettings.AirPlayDeviceName = newName;
+        _settingsService.SaveSettings(_appSettings);
+
+        _airPlayReceiver.ServerName = newName;
+        await _airPlayAdvertiser.UpdateServerNameAsync(newName);
+
+        AirPlayHintText = $"💡 Trên iPhone: Mở Control Center ➔ Chọn 'Phản chiếu màn hình' ➔ Chọn '{newName}'";
+        StatusMessage = $"Đã cập nhật tên AirPlay thành: '{newName}'";
     }
 
     private async Task StartAirPlayAsync()
