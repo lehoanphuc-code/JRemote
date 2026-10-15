@@ -64,6 +64,24 @@ public partial class MainViewModel : ObservableObject, IAsyncDisposable
     private string _wifiIpInput = string.Empty;
 
     [ObservableProperty]
+    private ObservableCollection<string> _recentWifiIps = new();
+
+    [ObservableProperty]
+    private string _pairingIpPort = string.Empty;
+
+    [ObservableProperty]
+    private string _pairingCode = string.Empty;
+
+    [ObservableProperty]
+    private string _pairingConnectPort = string.Empty;
+
+    [ObservableProperty]
+    private bool _isWirelessPairingOpen;
+
+    [ObservableProperty]
+    private bool _isConnectingWifi;
+
+    [ObservableProperty]
     private bool _isAlwaysOnTop;
 
     [ObservableProperty]
@@ -136,6 +154,15 @@ public partial class MainViewModel : ObservableObject, IAsyncDisposable
         AirPlayDeviceName = _appSettings.AirPlayDeviceName;
         AirPlayHintText = $"💡 Trên iPhone: Mở Control Center ➔ Chọn 'Phản chiếu màn hình' ➔ Chọn '{AirPlayDeviceName}'";
 
+        foreach (var ip in _appSettings.RecentWifiIps)
+        {
+            RecentWifiIps.Add(ip);
+        }
+        if (RecentWifiIps.Count > 0 && string.IsNullOrWhiteSpace(WifiIpInput))
+        {
+            WifiIpInput = RecentWifiIps[0];
+        }
+
         _adbService = new AdbService();
         var airPlaySecurity = new AirPlaySecurity();
         _airPlayAdvertiser = new AirPlayAdvertiser(airPlaySecurity, AirPlayDeviceName);
@@ -158,6 +185,21 @@ public partial class MainViewModel : ObservableObject, IAsyncDisposable
         {
             AdbStatus = "ADB Sẵn sàng (Port 5037)";
             await RefreshDevicesAsync();
+
+            // Tự động kết nối lại thiết bị Wi-Fi gần nhất nếu có
+            if (_appSettings.AutoReconnectWifi && _appSettings.RecentWifiIps.Count > 0)
+            {
+                _ = Task.Run(async () =>
+                {
+                    foreach (var ipPort in _appSettings.RecentWifiIps.Take(2))
+                    {
+                        var parts = ipPort.Split(':');
+                        var ip = parts[0];
+                        var port = parts.Length > 1 && int.TryParse(parts[1], out var p) ? p : 5555;
+                        await _adbService.ConnectWifiDeviceAsync(ip, port);
+                    }
+                });
+            }
         }
         else
         {
@@ -209,43 +251,181 @@ public partial class MainViewModel : ObservableObject, IAsyncDisposable
     {
         if (string.IsNullOrWhiteSpace(WifiIpInput))
         {
-            StatusMessage = "Vui lòng nhập địa chỉ IP thiết bị (ví dụ 192.168.1.50)";
+            StatusMessage = "Vui lòng nhập địa chỉ IP thiết bị (ví dụ 192.168.1.50:5555)";
             return;
         }
 
+        IsConnectingWifi = true;
         StatusMessage = $"Đang kết nối tới {WifiIpInput}...";
-        var parts = WifiIpInput.Trim().Split(':');
-        var ip = parts[0];
-        var port = parts.Length > 1 && int.TryParse(parts[1], out var p) ? p : 5555;
 
-        var success = await _adbService.ConnectWifiDeviceAsync(ip, port);
-        if (success)
+        try
         {
-            StatusMessage = $"Kết nối Wi-Fi thành công: {WifiIpInput}";
-            WifiIpInput = string.Empty;
-            await RefreshDevicesAsync();
+            var raw = WifiIpInput.Trim();
+            var parts = raw.Split(':');
+            var ip = parts[0];
+            var port = parts.Length > 1 && int.TryParse(parts[1], out var p) ? p : 5555;
+            var fullIpPort = $"{ip}:{port}";
+
+            var success = await _adbService.ConnectWifiDeviceAsync(ip, port);
+            if (success)
+            {
+                StatusMessage = $"Kết nối Wi-Fi thành công: {fullIpPort}";
+                _settingsService.AddRecentWifiIp(_appSettings, fullIpPort);
+                UpdateRecentWifiIpsCollection();
+                await RefreshDevicesAsync();
+            }
+            else
+            {
+                StatusMessage = $"Không thể kết nối tới {fullIpPort}. Hãy đảm bảo đã bật 'Wireless Debugging' trên điện thoại.";
+            }
         }
-        else
+        catch (Exception ex)
         {
-            StatusMessage = $"Không thể kết nối tới {WifiIpInput}. Hãy đảm bảo đã bật 'Wireless Debugging' trên điện thoại.";
+            StatusMessage = $"Lỗi kết nối Wi-Fi: {ex.Message}";
+        }
+        finally
+        {
+            IsConnectingWifi = false;
         }
     }
 
     [RelayCommand]
-    public async Task EnableDeviceWifiAdbAsync(DeviceItemViewModel? deviceVm)
+    public void SelectRecentIp(string? ipPort)
     {
-        if (deviceVm?.Device is AndroidDevice androidDevice)
+        if (!string.IsNullOrWhiteSpace(ipPort))
         {
-            StatusMessage = $"Đang mở cổng Wi-Fi 5555 cho {androidDevice.Info.Name}...";
-            var ok = await _adbService.EnableWirelessAdbAsync(androidDevice.DeviceData);
-            if (ok)
+            WifiIpInput = ipPort.Trim();
+        }
+    }
+
+    [RelayCommand]
+    public void ToggleWirelessPairing()
+    {
+        IsWirelessPairingOpen = !IsWirelessPairingOpen;
+    }
+
+    [RelayCommand]
+    public async Task PairAndConnectWirelessAsync()
+    {
+        if (string.IsNullOrWhiteSpace(PairingIpPort) || string.IsNullOrWhiteSpace(PairingCode))
+        {
+            StatusMessage = "Vui lòng nhập Địa chỉ IP:Cổng ghép đôi và Mã PIN ghép nối 6 chữ số!";
+            return;
+        }
+
+        IsConnectingWifi = true;
+        StatusMessage = $"Đang ghép đôi với {PairingIpPort}...";
+
+        try
+        {
+            var (pairOk, pairMsg) = await _adbService.PairDeviceAsync(PairingIpPort, PairingCode);
+            if (!pairOk)
             {
-                StatusMessage = "Đã kích hoạt cổng Wi-Fi 5555! Bây giờ bạn có thể rút cáp và kết nối bằng IP.";
+                StatusMessage = $"Lỗi ghép đôi: {pairMsg}";
+                return;
+            }
+
+            StatusMessage = "Ghép đôi thành công! Đang kết nối kênh truyền...";
+
+            // Lấy IP từ chuỗi IP:Cổng ghép đôi
+            var pairParts = PairingIpPort.Trim().Split(':');
+            var ip = pairParts[0];
+
+            int connectPort = 5555;
+            if (!string.IsNullOrWhiteSpace(PairingConnectPort) && int.TryParse(PairingConnectPort.Trim(), out var cp))
+            {
+                connectPort = cp;
+            }
+
+            var connectOk = await _adbService.ConnectWifiDeviceAsync(ip, connectPort);
+            if (!connectOk && connectPort != 5555)
+            {
+                connectOk = await _adbService.ConnectWifiDeviceAsync(ip, 5555);
+                if (connectOk) connectPort = 5555;
+            }
+
+            if (connectOk)
+            {
+                var fullIpPort = $"{ip}:{connectPort}";
+                StatusMessage = $"Kết nối không dây thành công: {fullIpPort}!";
+                _settingsService.AddRecentWifiIp(_appSettings, fullIpPort);
+                UpdateRecentWifiIpsCollection();
+                IsWirelessPairingOpen = false;
+                PairingCode = string.Empty;
+                await RefreshDevicesAsync();
             }
             else
             {
-                StatusMessage = "Không thể kích hoạt cổng Wi-Fi. Hãy thử lại.";
+                StatusMessage = $"Đã ghép đôi thành công! Vui lòng nhập đúng Cổng kết nối (Connect Port) hiển thị trên điện thoại.";
             }
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Lỗi ghép đôi: {ex.Message}";
+        }
+        finally
+        {
+            IsConnectingWifi = false;
+        }
+    }
+
+    [RelayCommand]
+    public async Task SwitchUsbToWifiAsync(DeviceItemViewModel? deviceVm)
+    {
+        if (deviceVm?.Device is AndroidDevice androidDevice)
+        {
+            StatusMessage = $"Đang tự động chuyển {androidDevice.Info.Name} sang Wi-Fi...";
+            IsConnectingWifi = true;
+
+            try
+            {
+                var (ok, msg, connectedIpPort) = await _adbService.SwitchUsbToWirelessAsync(androidDevice.DeviceData);
+                StatusMessage = msg;
+                if (ok && !string.IsNullOrEmpty(connectedIpPort))
+                {
+                    _settingsService.AddRecentWifiIp(_appSettings, connectedIpPort);
+                    UpdateRecentWifiIpsCollection();
+                    await RefreshDevicesAsync();
+                }
+            }
+            catch (Exception ex)
+            {
+                StatusMessage = $"Lỗi chuyển Wi-Fi: {ex.Message}";
+            }
+            finally
+            {
+                IsConnectingWifi = false;
+            }
+        }
+    }
+
+    [RelayCommand]
+    public async Task DisconnectWifiDeviceAsync(DeviceItemViewModel? deviceVm)
+    {
+        if (deviceVm?.Device is AndroidDevice androidDevice)
+        {
+            var target = androidDevice.DeviceData.Serial;
+            StatusMessage = $"Đang ngắt kết nối {target}...";
+
+            try
+            {
+                await _adbService.DisconnectDeviceAsync(target);
+                await RefreshDevicesAsync();
+                StatusMessage = $"Đã ngắt kết nối Wi-Fi thiết bị {target}";
+            }
+            catch (Exception ex)
+            {
+                StatusMessage = $"Lỗi ngắt kết nối: {ex.Message}";
+            }
+        }
+    }
+
+    private void UpdateRecentWifiIpsCollection()
+    {
+        RecentWifiIps.Clear();
+        foreach (var ip in _appSettings.RecentWifiIps)
+        {
+            RecentWifiIps.Add(ip);
         }
     }
 

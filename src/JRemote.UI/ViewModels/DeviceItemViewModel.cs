@@ -16,6 +16,9 @@ public partial class DeviceItemViewModel : ObservableObject
     public bool IsAndroid => Type == DeviceType.Android;
     public bool IsIos => Type == DeviceType.iOS;
     public bool IsWifi => ConnectionType == ConnectionType.WiFi;
+    public bool IsUsb => ConnectionType == ConnectionType.Usb;
+    public bool IsAndroidUsb => IsAndroid && IsUsb;
+    public bool IsAndroidWifi => IsAndroid && IsWifi;
 
     [ObservableProperty]
     private DeviceState _state;

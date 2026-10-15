@@ -65,6 +65,22 @@ public class SettingsService
         }
     }
 
+    public void AddRecentWifiIp(AppSettings settings, string ipPort)
+    {
+        if (string.IsNullOrWhiteSpace(ipPort)) return;
+        ipPort = ipPort.Trim();
+
+        settings.RecentWifiIps.RemoveAll(x => string.Equals(x, ipPort, StringComparison.OrdinalIgnoreCase));
+        settings.RecentWifiIps.Insert(0, ipPort);
+
+        if (settings.RecentWifiIps.Count > 5)
+        {
+            settings.RecentWifiIps = settings.RecentWifiIps.Take(5).ToList();
+        }
+
+        SaveSettings(settings);
+    }
+
     public static string GenerateDefaultAirPlayName()
     {
         var raw = Environment.MachineName;

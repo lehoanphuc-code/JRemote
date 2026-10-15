@@ -1,7 +1,10 @@
 using AdvancedSharpAdbClient;
 using AdvancedSharpAdbClient.Models;
+using JRemote.Core.Logging;
 using JRemote.Core.Models;
+using System.Diagnostics;
 using System.Net;
+using System.Text.RegularExpressions;
 
 namespace JRemote.Android.Adb;
 
@@ -105,6 +108,150 @@ public class AdbService : IDisposable
         {
             return false;
         }
+    }
+
+    public async Task<(bool Success, string Output)> ExecuteAdbCliAsync(string arguments, CancellationToken cancellationToken = default)
+    {
+        var adbPath = AdbLocator.FindAdbPath();
+        if (string.IsNullOrEmpty(adbPath) || !File.Exists(adbPath))
+        {
+            return (false, "Không tìm thấy file adb.exe");
+        }
+
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = adbPath,
+                Arguments = arguments,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            };
+
+            using var proc = Process.Start(psi);
+            if (proc == null) return (false, "Không thể khởi chạy adb.exe");
+
+            var stdoutTask = proc.StandardOutput.ReadToEndAsync(cancellationToken);
+            var stderrTask = proc.StandardError.ReadToEndAsync(cancellationToken);
+
+            await proc.WaitForExitAsync(cancellationToken);
+            var stdout = await stdoutTask;
+            var stderr = await stderrTask;
+            var combined = (stdout + "\n" + stderr).Trim();
+
+            return (proc.ExitCode == 0, combined);
+        }
+        catch (Exception ex)
+        {
+            return (false, ex.Message);
+        }
+    }
+
+    public async Task<string?> GetDeviceWifiIpAsync(DeviceData device, CancellationToken cancellationToken = default)
+    {
+        // 1. Thử lệnh: ip route (lấy src IP của default route hoặc wlan0)
+        var (_, routeOut) = await ExecuteAdbCliAsync($"-s {device.Serial} shell ip route", cancellationToken);
+        var matchRoute = Regex.Match(routeOut, @"(?:src|dev\s+wlan\d+)\s+([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})");
+        if (matchRoute.Success)
+        {
+            var ip = matchRoute.Groups[1].Value;
+            if (IsValidIpv4(ip)) return ip;
+        }
+
+        // 2. Thử lệnh: ip -f inet addr show wlan0
+        var (_, addrOut) = await ExecuteAdbCliAsync($"-s {device.Serial} shell ip -f inet addr show wlan0", cancellationToken);
+        var matchAddr = Regex.Match(addrOut, @"inet\s+([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})");
+        if (matchAddr.Success)
+        {
+            var ip = matchAddr.Groups[1].Value;
+            if (IsValidIpv4(ip)) return ip;
+        }
+
+        // 3. Fallback: getprop dhcp.wlan0.ipaddress
+        var (_, propOut) = await ExecuteAdbCliAsync($"-s {device.Serial} shell getprop dhcp.wlan0.ipaddress", cancellationToken);
+        var cleanProp = propOut.Trim();
+        if (IsValidIpv4(cleanProp))
+        {
+            return cleanProp;
+        }
+
+        return null;
+    }
+
+    private static bool IsValidIpv4(string? ip)
+    {
+        if (string.IsNullOrWhiteSpace(ip)) return false;
+        return IPAddress.TryParse(ip, out var parsed) &&
+               parsed.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork &&
+               !IPAddress.IsLoopback(parsed) &&
+               ip != "0.0.0.0";
+    }
+
+    public async Task<(bool Success, string Message, string? ConnectedIpPort)> SwitchUsbToWirelessAsync(DeviceData device, int port = 5555, CancellationToken cancellationToken = default)
+    {
+        AppLogger.Log($"[Adb Wi-Fi] Đang truy vấn địa chỉ IP Wi-Fi của thiết bị {device.Serial}...");
+        var wifiIp = await GetDeviceWifiIpAsync(device, cancellationToken);
+        if (string.IsNullOrEmpty(wifiIp))
+        {
+            return (false, "Không tìm thấy địa chỉ IP Wi-Fi trên thiết bị. Hãy đảm bảo điện thoại đã bật Wi-Fi và kết nối cùng mạng với máy tính.", null);
+        }
+
+        AppLogger.Log($"[Adb Wi-Fi] Phát hiện IP Wi-Fi thiết bị: {wifiIp}. Đang mở cổng TCP {port}...");
+        var tcpipOk = await EnableWirelessAdbAsync(device, port);
+        if (!tcpipOk)
+        {
+            // Thử lại qua CLI
+            await ExecuteAdbCliAsync($"-s {device.Serial} tcpip {port}", cancellationToken);
+        }
+
+        // Đợi 1 giây để daemon ADB trên điện thoại khởi động lại trên cổng TCP
+        await Task.Delay(1000, cancellationToken);
+
+        AppLogger.Log($"[Adb Wi-Fi] Đang kết nối tới {wifiIp}:{port}...");
+        var targetIpPort = $"{wifiIp}:{port}";
+        var connectResult = await ConnectWifiDeviceAsync(wifiIp, port);
+        if (!connectResult)
+        {
+            // Thử kết nối qua CLI
+            var (cliOk, cliOut) = await ExecuteAdbCliAsync($"connect {targetIpPort}", cancellationToken);
+            connectResult = cliOk || cliOut.Contains("connected", StringComparison.OrdinalIgnoreCase);
+        }
+
+        if (connectResult)
+        {
+            AppLogger.Log($"[Adb Wi-Fi] ★ Kết nối không dây thành công: {targetIpPort}");
+            return (true, $"Đã kết nối Wi-Fi thành công: {targetIpPort}! Bây giờ bạn có thể rút cáp USB.", targetIpPort);
+        }
+
+        return (false, $"Đã mở cổng {port} nhưng không thể kết nối tới {targetIpPort}. Hãy thử kết nối lại.", null);
+    }
+
+    public async Task<(bool Success, string Message)> PairDeviceAsync(string ipPort, string pairingCode, CancellationToken cancellationToken = default)
+    {
+        ipPort = ipPort.Trim();
+        pairingCode = pairingCode.Trim();
+
+        AppLogger.Log($"[Adb Pairing] Đang gửi yêu cầu ghép đôi tới {ipPort} với mã {pairingCode}...");
+        var (ok, output) = await ExecuteAdbCliAsync($"pair {ipPort} {pairingCode}", cancellationToken);
+
+        if (ok || output.Contains("Successfully paired", StringComparison.OrdinalIgnoreCase))
+        {
+            AppLogger.Log($"[Adb Pairing] ★ Ghép đôi thành công: {ipPort}");
+            return (true, $"Ghép đôi thành công thiết bị {ipPort}!");
+        }
+
+        AppLogger.Log($"[Adb Pairing] Ghép đôi thất bại: {output}");
+        return (false, string.IsNullOrWhiteSpace(output) ? "Ghép đôi thất bại. Hãy kiểm tra lại mã PIN và địa chỉ IP:Cổng." : output);
+    }
+
+    public async Task<bool> DisconnectDeviceAsync(string ipPort, CancellationToken cancellationToken = default)
+    {
+        ipPort = ipPort.Trim();
+        AppLogger.Log($"[Adb Wi-Fi] Đang ngắt kết nối {ipPort}...");
+        var (ok, _) = await ExecuteAdbCliAsync($"disconnect {ipPort}", cancellationToken);
+        return ok;
     }
 
     public void Dispose()
