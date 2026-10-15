@@ -190,7 +190,7 @@
                                        Padding="10,5"
                                        Command="{Binding ConnectWifiCommand}">
                                 <StackPanel Orientation="Horizontal">
-                                    <ui:SymbolIcon Symbol="Wifi20" FontSize="13" Margin="0,0,4,0" />
+                                    <ui:SymbolIcon Symbol="Wifi424" FontSize="13" Margin="0,0,4,0" />
                                     <TextBlock Text="Kết nối Wi-Fi" FontWeight="SemiBold" />
                                 </StackPanel>
                             </ui:Button>
@@ -313,7 +313,7 @@
                                                            Command="{Binding DataContext.SwitchUsbToWifiCommand, RelativeSource={RelativeSource AncestorType=ListBox}}"
                                                            CommandParameter="{Binding}">
                                                     <StackPanel Orientation="Horizontal">
-                                                        <ui:SymbolIcon Symbol="Wifi24" FontSize="12" Margin="0,0,4,0" Foreground="#00c6ff" />
+                                                        <ui:SymbolIcon Symbol="Wifi424" FontSize="12" Margin="0,0,4,0" Foreground="#00c6ff" />
                                                         <TextBlock Text="Chuyển Wi-Fi" />
                                                     </StackPanel>
                                                 </ui:Button>
