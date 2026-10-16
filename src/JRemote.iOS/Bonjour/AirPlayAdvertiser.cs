@@ -36,9 +36,10 @@ public class AirPlayAdvertiser : IAsyncDisposable
 
         try
         {
-            var (activeIps, macWithColons, macNoColons, nicName) = GetPrimaryNetworkDetails();
+            var (activeIps, _, _, nicName) = GetPrimaryNetworkDetails();
+            var (macWithColons, macNoColons, pi) = AirPlayDeviceIdentity.Generate(ServerName);
 
-            AppLogger.Log($"[mDNS] Sử dụng card mạng: '{nicName}' | IP: {string.Join(", ", activeIps)} | MAC: {macWithColons}");
+            AppLogger.Log($"[mDNS] Sử dụng card mạng: '{nicName}' | IP: {string.Join(", ", activeIps)} | Virtual MAC: {macWithColons} | PI: {pi}");
 
             _mdns = new MulticastService();
             _sd = new ServiceDiscovery(_mdns);
@@ -54,7 +55,7 @@ public class AirPlayAdvertiser : IAsyncDisposable
             _airPlayProfile.AddProperty("flags", "0x44");
             _airPlayProfile.AddProperty("vv", "2");
             _airPlayProfile.AddProperty("pk", pkHex);
-            _airPlayProfile.AddProperty("pi", "2e388006-13ba-4041-9a67-25dd4a43d536");
+            _airPlayProfile.AddProperty("pi", pi);
 
             // 2. RAOP Audio / Screen Streaming Profile (_raop._tcp) bound to real physical IPs
             var raopInstanceName = $"{macNoColons}@{ServerName}";
@@ -99,9 +100,9 @@ public class AirPlayAdvertiser : IAsyncDisposable
         return Task.CompletedTask;
     }
 
-    public Task StopAsync()
+    public async Task StopAsync()
     {
-        if (!_isAdvertising) return Task.CompletedTask;
+        if (!_isAdvertising) return;
 
         try
         {
@@ -109,9 +110,12 @@ public class AirPlayAdvertiser : IAsyncDisposable
             {
                 if (_airPlayProfile != null) _sd.Unadvertise(_airPlayProfile);
                 if (_raopProfile != null) _sd.Unadvertise(_raopProfile);
-                _sd.Dispose();
             }
 
+            // Chờ một chút để socket mDNS kịp phát gói tin Unadvertise (TTL = 0) ra mạng
+            await Task.Delay(150);
+
+            _sd?.Dispose();
             _mdns?.Stop();
             _mdns?.Dispose();
             AppLogger.Log("[mDNS] Đã dừng phát sóng AirPlay.");
@@ -126,8 +130,6 @@ public class AirPlayAdvertiser : IAsyncDisposable
             _sd = null;
             _mdns = null;
         }
-
-        return Task.CompletedTask;
     }
 
     public async Task UpdateServerNameAsync(string newServerName, CancellationToken cancellationToken = default)
@@ -140,6 +142,7 @@ public class AirPlayAdvertiser : IAsyncDisposable
         if (wasAdvertising)
         {
             await StopAsync();
+            await Task.Delay(200, cancellationToken);
         }
 
         ServerName = newServerName;

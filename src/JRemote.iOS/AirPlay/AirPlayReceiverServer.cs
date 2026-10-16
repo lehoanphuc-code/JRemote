@@ -404,7 +404,7 @@ public class AirPlayReceiverServer : IAsyncDisposable
 
     private byte[] BuildInfoPlistResponse(string protocol, string cseq)
     {
-        var mac = GetMacAddress();
+        var (mac, _, pi) = AirPlayDeviceIdentity.Generate(ServerName);
         var pkBase64 = Convert.ToBase64String(_security.EdPublicKey);
 
         var plist = $"""
@@ -421,7 +421,7 @@ public class AirPlayReceiverServer : IAsyncDisposable
                 <key>name</key>
                 <string>{ServerName}</string>
                 <key>pi</key>
-                <string>2e388006-13ba-4041-9a67-25dd4a43d536</string>
+                <string>{pi}</string>
                 <key>pk</key>
                 <data>{pkBase64}</data>
                 <key>protovers</key>

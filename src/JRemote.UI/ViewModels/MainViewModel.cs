@@ -179,6 +179,10 @@ public partial class MainViewModel : ObservableObject, IAsyncDisposable
         // 1. Tự động kiểm tra bản cập nhật mới trên GitHub ngay khi mở app (chạy nền hoàn toàn)
         _ = Task.Run(CheckForUpdatesAsync);
 
+        // 2. Tự động bật AirPlay receiver ngay lập tức để iPhone quét thấy ngay
+        await StartAirPlayAsync();
+
+        // 3. Kết nối ADB server và quét thiết bị Android
         StatusMessage = "Đang kết nối ADB server...";
         var adbOk = await _adbService.InitializeAsync();
         if (adbOk)
@@ -206,8 +210,6 @@ public partial class MainViewModel : ObservableObject, IAsyncDisposable
             AdbStatus = "Không tìm thấy adb.exe (Cần cấu hình hoặc đặt vào bin/adb)";
         }
 
-        // Tự động bật AirPlay receiver
-        await StartAirPlayAsync();
         StatusMessage = "Khởi tạo hoàn tất";
     }
 

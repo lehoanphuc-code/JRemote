@@ -413,8 +413,11 @@
                                 <ui:SymbolIcon Symbol="ScreenSearch24" FontSize="24" Foreground="#38ef7d" Margin="0,0,10,0" />
                                 <StackPanel>
                                     <TextBlock Text="Đang chờ kết nối từ iPhone / Android..." FontSize="14" FontWeight="SemiBold" Foreground="#ffffff" />
-                                    <TextBlock Text="Mở Control Center trên iPhone ➔ Chọn 'Phản chiếu màn hình' ➔ Nhấn 'JRemote-PC'. Nhật ký kết nối sẽ hiển thị bên dưới:"
-                                               FontSize="12" Foreground="#888888" />
+                                    <TextBlock FontSize="12" Foreground="#888888">
+                                        <Run Text="Mở Control Center trên iPhone ➔ Chọn 'Phản chiếu màn hình' ➔ Nhấn '" />
+                                        <Run Text="{Binding AirPlayDeviceName, Mode=OneWay}" FontWeight="SemiBold" Foreground="#38ef7d" />
+                                        <Run Text="'. Nhật ký kết nối sẽ hiển thị bên dưới:" />
+                                    </TextBlock>
                                 </StackPanel>
                             </StackPanel>
                         </Border>
